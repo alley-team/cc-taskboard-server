@@ -1,26 +1,81 @@
 use std::convert::Infallible;
+use hyper::{Body, Server, Method};
+use hyper::body::{to_bytes as hyper_to_bytes, Bytes as HyperBytes};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server, Method, StatusCode};
-use tokio_postgres;
+use hyper::server::conn::AddrStream;
+use tokio_postgres::{NoTls, Error as PgError, Client as PgClient, connect as pg_con};
+use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
+use std::{io, error::Error as StdError, sync::{Arc, Mutex}, boxed::Box, net::SocketAddr};
+use serde_json::{Result as JsonResult, from_str as json_de};
+use crate::data::{CCTaskboardAppContext, AdminAuth};
 
-fn app_get_all(s: String) -> String {
-  
+mod data;
+
+fn json_parse_admin_auth_key(bytes: HyperBytes) -> JsonResult<String> {
+  let auth: AdminAuth = json_de(&String::from_utf8(bytes.to_vec()).unwrap())?;
+  Ok(auth.key)
 }
 
-async fn hyper_routing(req: Request<Body>) -> Result<Response<Body>, Infallible> {
-  let mut response = Response::new(Body::empty());
-  match (req.method(), req.uri().path()) {
-    (&Method::GET, "/") => {
-      *response.body_mut() = Body::from(String::from("{ \"hello\": \"мир\" }"));
+fn app_get_all(s: String) -> String {
+  String::from("all")
+}
+
+async fn pg_setup(mut cli: PgClient) -> Result<(), PgError> {
+  cli.transaction().await?;
+  let queries = vec![
+    String::from(""),
+    String::from(""),
+    ];
+  cli.query("", &[]);
+  Ok(())
+}
+
+fn hyper_404_route() -> Response<Body> {
+  Response::builder()
+    .status(StatusCode::NOT_FOUND)
+    .body(Body::empty()).unwrap()
+}
+
+async fn hyper_route_postgres_setup(
+    req: Request<Body>,
+    cli: PgClient,
+    cont: CCTaskboardAppContext,
+) -> HttpResult<Response<Body>> {
+  Ok(Response::builder()
+    .status(match hyper_to_bytes(req.into_body()).await {
+      Err(_) => StatusCode::UNAUTHORIZED,
+      Ok(bytes) => match json_parse_admin_auth_key(bytes).unwrap() == cont.admin_key {
+        false => StatusCode::UNAUTHORIZED,
+        true => match pg_setup(cli).await {
+          Ok(_) => StatusCode::OK,
+          Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+      }
+    })
+    .body(Body::empty())?)
+}
+
+/// Осуществляет переадресацию на сервере.
+///
+/// Обрабатывает каждое соединение с сервером.
+async fn hyper_routing(
+    context: CCTaskboardAppContext,
+    addr: SocketAddr,
+    req: Request<Body>
+) -> Result<Response<Body>, Infallible> {
+  let (pg_client, pg_connection) = pg_con(context.pg_config.as_str(), NoTls).await.unwrap();
+  tokio::spawn(async move {
+    if let Err(e) = pg_connection.await {
+      eprintln!("Ошибка подключения к PostgreSQL: {}", e);
+    }
+  });
+  Ok(match (req.method(), req.uri().path()) {
+    (&Method::POST, "/") => match hyper_route_postgres_setup(req, pg_client, context).await {
+      Ok(resp) => resp,
+      _ => hyper_404_route(),
     },
-    (&Method::POST, "/echo") => {
-      *response.body_mut() = req.into_body();
-    },
-    _ => {
-      *response.status_mut() = StatusCode::NOT_FOUND;
-    },
-  };
-  Ok(response)
+    _ => hyper_404_route(),
+  })
 }
 
 async fn hyper_shutdown_signal() {
@@ -29,20 +84,60 @@ async fn hyper_shutdown_signal() {
     .expect("Не удалось установить комбинацию Ctrl+C как завершающую работу.");
 }
 
-#[tokio::main]
-pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// 
+fn setup() -> Result<(String, u16, String), Box<dyn StdError>> {
+  let stdin = io::stdin();
+  
   println!("Привет! Это сервер CC TaskBoard. Прежде чем мы начнём, заполните несколько параметров.");
-  println!("");
-  let hyper_service = make_service_fn(|_conn| {
-    async { Ok::<_, Infallible>(service_fn(hyper_routing)) }
+  println!("Введите имя пользователя PostgreSQL:");
+  let mut buffer = String::new();
+  stdin.read_line(&mut buffer)?;
+  let buffer = buffer.strip_suffix("\n").ok_or("")?;
+  let pg_config = String::from("host=localhost user='") + &buffer + &String::from("' password='");
+  
+  println!("Введите пароль PostgreSQL:");
+  let mut buffer = String::new();
+  stdin.read_line(&mut buffer)?;
+  let buffer = buffer.strip_suffix("\n").ok_or("")?;
+  let pg_config = pg_config + &buffer + &String::from("'");
+  
+  println!("Введите номер порта сервера:");
+  let mut buffer = String::new();
+  stdin.read_line(&mut buffer)?;
+  let buffer = buffer.strip_suffix("\n").ok_or("")?;
+  let port: u16 = buffer.parse()?;
+  
+  println!("Введите ключ для аутентификации администратора (минимум 64 символа):");
+  let mut buffer = String::new();
+  stdin.read_line(&mut buffer)?;
+  let admin_auth_key = String::from(buffer.strip_suffix("\n").ok_or("")?);
+  
+  Ok((pg_config, port, admin_auth_key))
+}
+
+#[tokio::main]
+pub async fn main() {
+  let (pg_config, hyper_port, admin_key) = setup().expect("Настройка не завершена.");
+  
+  let hyper_context = CCTaskboardAppContext { pg_config, admin_key };
+  
+  let hyper_service = make_service_fn(move |conn: &AddrStream| {
+    let context = hyper_context.clone();
+    let addr = conn.remote_addr();
+    let service = service_fn(move |req| { 
+      hyper_routing(context.clone(), addr, req)
+    });
+    async move { Ok::<_, Infallible>(service) }
   });
-  let hyper_server_addr = ([127, 0, 0, 1], 9867).into();
+  
+  let hyper_server_addr = ([127, 0, 0, 1], hyper_port).into();
+  
   let hyper_server = Server::bind(&hyper_server_addr).serve(hyper_service);
   println!("Сервер слушает по адресу http://{}", hyper_server_addr);
-  let (pg_client, pg_connection) = tokio_postgres::connect("host=localhost user=postgres", NoTls).await?;
+  
   let hyper_finish = hyper_server.with_graceful_shutdown(hyper_shutdown_signal());
-  if let Err(e) = hyper_finish.await {
-    eprintln!("Ошибка сервера: {}", e);
+  match hyper_finish.await {
+    Err(e) => eprintln!("Ошибка сервера: {}", e),
+    _ => println!("\nСервер успешно выключен.")
   }
-  Ok(())
 }
