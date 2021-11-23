@@ -53,7 +53,7 @@ pub struct Tag {
 pub struct Subtask {
   pub id: u64,
   pub title: String,
-  pub author_id: u64,
+  pub executors: Vec<u64>,
   pub exec: bool,
   pub tags: Vec<Tag>,
   pub timelines: Timelines,
@@ -65,7 +65,7 @@ pub struct Subtask {
 pub struct Task {
   pub id: u64,
   pub title: String,
-  pub author_id: u64,
+  pub executors: Vec<u64>,
   pub exec: bool,
   pub subtasks: Vec<Subtask>,
   pub notes: String,
@@ -79,7 +79,6 @@ pub struct Task {
 pub struct Board {
   pub id: u64,
   pub title: String,
-  pub author_id: u64,
   pub tasks: Vec<Task>,
   pub color_set: ColorSet,
 }

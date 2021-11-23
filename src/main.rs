@@ -9,6 +9,9 @@ use std::{io, error::Error as StdError, sync::{Arc, Mutex}, boxed::Box, net::Soc
 use serde_json::{Result as JsonResult, from_str as json_de};
 use crate::data::{CCTaskboardAppContext, AdminAuth};
 
+extern crate crypto;
+extern crate passwords;
+
 mod data;
 
 fn json_parse_admin_auth_key(bytes: HyperBytes) -> JsonResult<String> {
@@ -23,8 +26,9 @@ fn app_get_all(s: String) -> String {
 async fn pg_setup(mut cli: PgClient) -> Result<(), PgError> {
   cli.transaction().await?;
   let queries = vec![
-    String::from(""),
-    String::from(""),
+    String::from("create table users (id bigserial, shared_pages varchar, auth_data varchar);"),
+    String::from("create table pages (id bigserial, title varchar[64], boards varchar, background_color char[7]);"),
+    String::from("create table boards (id bigserial, title varchar[64], tasks varchar, color char[7], background_color char[7]);"),
     ];
   cli.query("", &[]);
   Ok(())
@@ -70,7 +74,7 @@ async fn hyper_routing(
     }
   });
   Ok(match (req.method(), req.uri().path()) {
-    (&Method::POST, "/") => match hyper_route_postgres_setup(req, pg_client, context).await {
+    (&Method::POST, "/pg-setup") => match hyper_route_postgres_setup(req, pg_client, context).await {
       Ok(resp) => resp,
       _ => hyper_404_route(),
     },
