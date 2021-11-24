@@ -5,7 +5,11 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::server::conn::AddrStream;
 use tokio_postgres::{NoTls, Error as PgError, Client as PgClient, connect as pg_con};
 use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
-use std::{io, error::Error as StdError, sync::{Arc, Mutex}, boxed::Box, net::SocketAddr};
+use std::{io, io::{Error as IOErr, ErrorKind as IOErrKind},
+          error::Error as StdError, 
+          sync::{Arc, Mutex}, 
+          boxed::Box, 
+          net::SocketAddr};
 use serde_json::{Result as JsonResult, from_str as json_de};
 use crate::data::{CCTaskboardAppContext, AdminAuth};
 
@@ -116,7 +120,10 @@ fn setup() -> Result<(String, u16, String), Box<dyn StdError>> {
   stdin.read_line(&mut buffer)?;
   let admin_auth_key = String::from(buffer.strip_suffix("\n").ok_or("")?);
   
-  Ok((pg_config, port, admin_auth_key))
+  match admin_auth_key.len() < 64 {
+    true => Err(Box::new(IOErr::new(IOErrKind::Other, "Длина ключа администратора меньше 64 символов."))),
+    false => Ok((pg_config, port, admin_auth_key)),
+  }
 }
 
 #[tokio::main]
