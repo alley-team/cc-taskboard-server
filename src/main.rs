@@ -7,7 +7,7 @@ use tokio_postgres::{NoTls, Error as PgError, Client as PgClient, connect as pg_
 use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
 use std::{io, io::{Error as IOErr, ErrorKind as IOErrKind},
           error::Error as StdError, 
-          sync::{Arc, Mutex}, 
+          // sync::{Arc, Mutex}, 
           boxed::Box, 
           net::SocketAddr};
 use serde_json::{Result as JsonResult, from_str as json_de};
@@ -23,9 +23,9 @@ fn json_parse_admin_auth_key(bytes: HyperBytes) -> JsonResult<String> {
   Ok(auth.key)
 }
 
-fn app_get_all(s: String) -> String {
-  String::from("all")
-}
+// fn app_get_all(s: String) -> String {
+//   String::from("all")
+// }
 
 async fn pg_setup(mut cli: PgClient) -> Result<(), PgError> {
   cli.transaction().await?;
@@ -34,7 +34,9 @@ async fn pg_setup(mut cli: PgClient) -> Result<(), PgError> {
     String::from("create table pages (id bigserial, title varchar[64], boards varchar, background_color char[7]);"),
     String::from("create table boards (id bigserial, title varchar[64], tasks varchar, color char[7], background_color char[7]);"),
     ];
-  cli.query("", &[]);
+  for x in &queries {
+    cli.query(x, &[]).await?;
+  }
   Ok(())
 }
 
@@ -68,7 +70,7 @@ async fn hyper_route_postgres_setup(
 /// Обрабатывает каждое соединение с сервером.
 async fn hyper_routing(
     context: CCTaskboardAppContext,
-    addr: SocketAddr,
+    _addr: SocketAddr,
     req: Request<Body>
 ) -> Result<Response<Body>, Infallible> {
   let (pg_client, pg_connection) = pg_con(context.pg_config.as_str(), NoTls).await.unwrap();
