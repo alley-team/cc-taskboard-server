@@ -102,19 +102,19 @@ fn setup() -> Result<(String, u16, String), Box<dyn StdError>> {
   println!("Введите имя пользователя PostgreSQL:");
   let mut buffer = String::new();
   stdin.read_line(&mut buffer)?;
-  let buffer = buffer.strip_suffix("\n").ok_or("")?;
+  let buffer = buffer.trim();
   let pg_config = String::from("host=localhost user='") + &buffer + &String::from("' password='");
   
   println!("Введите пароль PostgreSQL:");
   let mut buffer = String::new();
   stdin.read_line(&mut buffer)?;
-  let buffer = buffer.strip_suffix("\n").ok_or("")?;
+  let buffer = buffer.trim();
   let pg_config = pg_config + &buffer + &String::from("'");
   
   println!("Введите номер порта сервера:");
   let mut buffer = String::new();
   stdin.read_line(&mut buffer)?;
-  let buffer = buffer.strip_suffix("\n").ok_or("")?;
+  let buffer = buffer.trim();
   let port: u16 = buffer.parse()?;
   
   println!("Введите ключ для аутентификации администратора (минимум 64 символа):");
@@ -152,5 +152,26 @@ pub async fn main() {
   match hyper_finish.await {
     Err(e) => eprintln!("Ошибка сервера: {}", e),
     _ => println!("\nСервер успешно выключен.")
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  
+  #[should_panic(expected = "Не удалось подключиться к Postgres. Проверьте, запущен ли локальный сервер базы данных и создан ли там пользователь 'cc-taskboard-tests' с паролем 't5VU`m|WF^0q)QQFlDLpkot7'.")]
+  async fn prepare_test() -> PgClient {
+    let mut (pg_client, _) = pg_con("host=localhost user='cc-taskboard-tests' password='t5VU`m|WF^0q)QQFlDLpkot7'", NoTls).await.unwrap();
+    tokio::spawn(async move {
+      if let Err(e) = pg_connection.await {
+        panic!("Ошибка подключения к PostgreSQL: {}", e);
+      }
+    });
+    pg_client
+  }
+  
+  async fn setup() -> Result<(), PgError> {
+    let pg_client = prepare_test().await;
+    
   }
 }
