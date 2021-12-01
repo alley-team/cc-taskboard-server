@@ -161,7 +161,7 @@ mod tests {
   
   #[should_panic(expected = "Не удалось подключиться к Postgres. Проверьте, запущен ли локальный сервер базы данных и создан ли там пользователь 'cc-taskboard-tests' с паролем 't5VU`m|WF^0q)QQFlDLpkot7'.")]
   async fn prepare_test() -> PgClient {
-    let mut (pg_client, _) = pg_con("host=localhost user='cc-taskboard-tests' password='t5VU`m|WF^0q)QQFlDLpkot7'", NoTls).await.unwrap();
+    let (mut pg_client, _) = pg_con("host=localhost user='cc-taskboard-tests' password='t5VU`m|WF^0q)QQFlDLpkot7'", NoTls).await.unwrap();
     tokio::spawn(async move {
       if let Err(e) = pg_connection.await {
         panic!("Ошибка подключения к PostgreSQL: {}", e);
