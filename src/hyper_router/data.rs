@@ -1,14 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Данные приложения.
-#[derive(Clone)]
-pub struct CCTaskboardAppContext {
-  /// Конфигурация Postgres.
-  pub pg_config: String,
-  /// Ключ аутентификации администратора.
-  pub admin_key: String,
-}
-
 /// Сведения аутентификации администратора.
 #[derive(Deserialize, Serialize)]
 pub struct AdminAuth {

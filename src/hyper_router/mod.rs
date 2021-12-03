@@ -1,5 +1,4 @@
 use tokio_postgres::{NoTls, Client as PgClient};
-
 mod data;
 
 /// Выдаёт информацию об ошибке.
@@ -29,13 +28,6 @@ async fn db_setup(
     .body(Body::empty())?)
 }
 
-/// Обрабатывает сигнал завершения работы сервера.
-async fn hyper_shutdown_signal() {
-  tokio::signal::ctrl_c()
-    .await
-    .expect("Не удалось установить комбинацию Ctrl+C как завершающую работу.");
-}
-
 fn ok_or_404(response: HttpResult<Response<Body>>) -> Response<Body> {
   match response {
     Ok(resp) => resp,
@@ -43,10 +35,17 @@ fn ok_or_404(response: HttpResult<Response<Body>>) -> Response<Body> {
   }
 }
 
+// Публичные функции:
+
+/// Обрабатывает сигнал завершения работы сервера.
+pub async fn shutdown() {
+  tokio::signal::ctrl_c()
+    .await
+    .expect("Не удалось установить комбинацию Ctrl+C как завершающую работу.");
+}
+
 /// Обрабатывает запросы клиентов.
-///
-/// 
-async fn router(
+pub async fn router(
     context: CCTaskboardAppContext,
     _addr: SocketAddr,
     req: Request<Body>
