@@ -1,7 +1,8 @@
-use std::{env, io, process, fs, boxed::Box};
+use std::{env, io, io::{Error as IOErr, ErrorKind as IOErrKind, Read}, process, fs, boxed::Box};
+use serde::{Deserialize, Serialize};
 
 /// Данные приложения.
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct AppConfig {
   /// Конфигурация Postgres.
   pub pg_config: String,
@@ -12,7 +13,7 @@ pub struct AppConfig {
 }
 
 /// Запрашивает конфигурацию у пользователя.
-fn stdin_setup() -> Result<AppConfig, Box<dyn StdError>> {
+fn stdin_setup() -> Result<AppConfig, Box<dyn std::error::Error>> {
   let stdin = io::stdin();
   println!("Привет! Это сервер CC TaskBoard. Прежде чем мы начнём, заполните несколько параметров.");
   println!("Введите имя пользователя PostgreSQL:");
@@ -42,20 +43,20 @@ fn stdin_setup() -> Result<AppConfig, Box<dyn StdError>> {
 
 /// Считывает информацию из данного файла.
 fn parse_cfg_file(filepath: String) -> Result<AppConfig, Box<dyn std::error::Error>> {
-  let file = fs::File::open(filepath)?;
+  let mut file = fs::File::open(filepath)?;
   let mut buffer = String::new();
   file.read_to_string(&mut buffer)?;
   let conf: AppConfig = serde_json::from_str(&buffer)?;
-  conf
+  Ok(conf)
 }
 
 /// Возвращает конфигурацию для запуска сервера.
 pub fn get_config() -> AppConfig {
-  match env.args().len() == 1 ? stdin_setup() : parse_cfg_file(env.args()[1]) {
+  match match env::args().len() == 1 { true => stdin_setup(), false => parse_cfg_file(env::args().nth(1).unwrap()) } {
     Ok(conf) => conf,
     Err(_) => {
+      println!("Считать конфигурацию не удалось.");
       process::exit(1);
-      AppConfig {}
     },
   }
 }

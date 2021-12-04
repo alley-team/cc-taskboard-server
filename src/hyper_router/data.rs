@@ -91,7 +91,7 @@ pub struct User {
   pub auth_data: UserAuth,
 }
 
-fn parse_admin_auth_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
+pub fn parse_admin_auth_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
   let auth: AdminAuth = serde_json::from_str(&String::from_utf8(bytes.to_vec()).unwrap())?;
   Ok(auth.key)
 }

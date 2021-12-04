@@ -1,21 +1,12 @@
-use hyper::{Body, Method};
+mod hyper_router;
 
-use hyper::service::{make_service_fn, service_fn};
-use hyper::server::conn::AddrStream;
-use tokio_postgres::{NoTls, Error as PgError, Client as PgClient};
-use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
-use std::{io, io::{Error as IOErr, ErrorKind as IOErrKind},
-          error::Error as StdError, 
-          // sync::{Arc, Mutex}, 
-          boxed::Box, 
-          net::SocketAddr};
-mod setup, hyper_router;
 extern crate crypto;
 extern crate passwords;
 
 #[tokio::main]
 pub async fn main() {
-  let cfg = setup::get_config();
+  let cfg = hyper_router::setup::get_config();
+  let port = cfg.hyper_port;
   
   let service = hyper::service::make_service_fn(move |conn: &hyper::server::conn::AddrStream| {
     let local_cfg = cfg.clone();
@@ -26,7 +17,7 @@ pub async fn main() {
     async move { Ok::<_, std::convert::Infallible>(service) }
   });
   
-  let addr = ([127, 0, 0, 1], cfg.hyper_port).into();
+  let addr = ([127, 0, 0, 1], port).into();
   let server = hyper::Server::bind(&addr).serve(service);
   println!("Сервер слушает по адресу http://{}", addr);
   

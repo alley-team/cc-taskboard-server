@@ -1,5 +1,15 @@
 use tokio_postgres::{NoTls, Client as PgClient};
+use hyper::{Body, Method};
+use std::net::SocketAddr;
+use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
+
 mod data;
+#[path="../postgres_fns.rs"]
+mod postgres_fns;
+#[path="../setup.rs"]
+pub mod setup;
+
+use setup::AppConfig;
 
 /// Выдаёт информацию об ошибке.
 fn route_404() -> Response<Body> {
@@ -12,12 +22,12 @@ fn route_404() -> Response<Body> {
 async fn db_setup(
     req: Request<Body>,
     cli: PgClient,
-    cont: CCTaskboardAppContext,
+    cont: AppConfig,
 ) -> HttpResult<Response<Body>> {
   Ok(Response::builder()
     .status(match hyper::body::to_bytes(req.into_body()).await {
       Err(_) => StatusCode::UNAUTHORIZED,
-      Ok(bytes) => match json_parse_admin_auth_key(bytes).unwrap() == cont.admin_key {
+      Ok(bytes) => match data::parse_admin_auth_key(bytes).unwrap() == cont.admin_key {
         false => StatusCode::UNAUTHORIZED,
         true => match postgres_fns::db_setup(cli).await {
           Ok(_) => StatusCode::OK,
@@ -46,10 +56,10 @@ pub async fn shutdown() {
 
 /// Обрабатывает запросы клиентов.
 pub async fn router(
-    context: CCTaskboardAppContext,
+    context: AppConfig,
     _addr: SocketAddr,
     req: Request<Body>
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response<hyper::Body>, std::convert::Infallible> {
   let (pg_client, pg_connection) = tokio_postgres::connect(context.pg_config.as_str(), NoTls).await.unwrap();
   tokio::spawn(async move {
     if let Err(e) = pg_connection.await {
@@ -57,7 +67,7 @@ pub async fn router(
     }
   });
   Ok(match (req.method(), req.uri().path()) {
-    (&Method::POST, "/pg-setup") => db_setup(req, pg_client, context).await.ok_or_404(),
+    (&Method::POST, "/pg-setup") => ok_or_404(db_setup(req, pg_client, context).await),
     _ => route_404(),
   })
 }
