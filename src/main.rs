@@ -1,11 +1,12 @@
-mod hyper_router;
-
-extern crate crypto;
 extern crate passwords;
+extern crate chrono;
+
+mod hyper_router;
+mod setup;
 
 #[tokio::main]
 pub async fn main() {
-  let cfg = hyper_router::setup::get_config();
+  let cfg = setup::get_config();
   let port = cfg.hyper_port;
   
   let service = hyper::service::make_service_fn(move |conn: &hyper::server::conn::AddrStream| {

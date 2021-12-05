@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc, serde::ts_seconds};
 
 /// Сведения аутентификации администратора.
 #[derive(Deserialize, Serialize)]
@@ -6,12 +7,31 @@ pub struct AdminAuth {
   pub key: String,
 }
 
+/// Токен авторизации. Используется при необходимости получить/передать данные.
+#[derive(Deserialize, Serialize)]
+pub struct TokenAuth {
+  pub id: i64,
+  pub token: String,
+}
+
+/// Токены аутентификации.
+#[derive(Deserialize, Serialize)]
+pub struct Token {
+  /// Уникальный идентификатор
+  pub tk: String,
+  /// Дата и время последнего использования токена.
+  /// WARNING Токены действительны не более пяти дней, в течение которых вы ими не пользуетесь.
+  #[serde(with = "ts_seconds")]
+  pub from_dt: DateTime<Utc>,
+}
+
 /// Сведения авторизации пользователя.
 #[derive(Deserialize, Serialize)]
-pub struct UserAuth {
+pub struct UserAuthData {
   pub login: String,
   pub pass: String,
   pub cc_key: String,
+  pub tokens: Vec<Token>,
 }
 
 /// Набор цветов для раскраски компонента.
@@ -42,9 +62,9 @@ pub struct Tag {
 /// Подзадача.
 #[derive(Deserialize, Serialize)]
 pub struct Subtask {
-  pub id: u64,
+  pub id: i64,
   pub title: String,
-  pub executors: Vec<u64>,
+  pub executors: Vec<i64>,
   pub exec: bool,
   pub tags: Vec<Tag>,
   pub timelines: Timelines,
@@ -54,9 +74,9 @@ pub struct Subtask {
 /// Задача.
 #[derive(Deserialize, Serialize)]
 pub struct Task {
-  pub id: u64,
+  pub id: i64,
   pub title: String,
-  pub executors: Vec<u64>,
+  pub executors: Vec<i64>,
   pub exec: bool,
   pub subtasks: Vec<Subtask>,
   pub notes: String,
@@ -68,7 +88,7 @@ pub struct Task {
 /// Доска.
 #[derive(Deserialize, Serialize)]
 pub struct Board {
-  pub id: u64,
+  pub id: i64,
   pub title: String,
   pub tasks: Vec<Task>,
   pub color_set: ColorSet,
@@ -77,7 +97,7 @@ pub struct Board {
 /// Страница.
 #[derive(Deserialize, Serialize)]
 pub struct Page {
-  pub id: u64,
+  pub id: i64,
   pub title: String,
   pub boards: Vec<Board>,
   pub background_color: String,
@@ -86,9 +106,9 @@ pub struct Page {
 /// Пользователь.
 #[derive(Deserialize, Serialize)]
 pub struct User {
-  pub id: u64,
-  pub shared_pages: Vec<u64>,
-  pub auth_data: UserAuth,
+  pub id: i64,
+  pub shared_pages: Vec<i64>,
+  pub auth_data: UserAuthData,
 }
 
 pub fn parse_admin_auth_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {

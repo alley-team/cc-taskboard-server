@@ -4,12 +4,8 @@ use std::net::SocketAddr;
 use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
 
 mod data;
-#[path="../postgres_fns.rs"]
 mod postgres_fns;
-#[path="../setup.rs"]
-pub mod setup;
-
-use setup::AppConfig;
+use super::setup::AppConfig;
 
 /// Выдаёт информацию об ошибке.
 fn route_404() -> Response<Body> {
@@ -38,6 +34,7 @@ async fn db_setup(
     .body(Body::empty())?)
 }
 
+/// Если функция вернула Result::Ok(resp), возвращает resp; иначе - 404.
 fn ok_or_404(response: HttpResult<Response<Body>>) -> Response<Body> {
   match response {
     Ok(resp) => resp,

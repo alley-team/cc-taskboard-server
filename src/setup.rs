@@ -52,8 +52,14 @@ fn parse_cfg_file(filepath: String) -> Result<AppConfig, Box<dyn std::error::Err
 
 /// Возвращает конфигурацию для запуска сервера.
 pub fn get_config() -> AppConfig {
-  match match env::args().len() == 1 { true => stdin_setup(), false => parse_cfg_file(env::args().nth(1).unwrap()) } {
-    Ok(conf) => conf,
+  match match env::args().len() == 1 {
+    true => stdin_setup(),
+    false => parse_cfg_file(env::args().nth(1).unwrap())
+  } {
+    Ok(conf) => {
+      println!("Конфигурация загружена.");
+      conf
+    },
     Err(_) => {
       println!("Считать конфигурацию не удалось.");
       process::exit(1);
