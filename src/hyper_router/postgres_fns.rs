@@ -1,5 +1,5 @@
 extern crate passwords;
-use super::data::{/*Token, */UserAuthData};
+use super::data::{TokenAuth, UserAuthData};
 use tokio_postgres::{Client as PgClient, Error as PgError};
 use passwords::{PasswordGenerator, hasher::{bcrypt, gen_salt}};
 
@@ -41,10 +41,10 @@ pub async fn register_new_cc_key(mut cli: PgClient) -> Result<String, PgError> {
 /// 
 /// Функция генерирует соль, хэширует пароль и соль - и записывает в базу данных. Возвращает идентификатор пользователя.
 pub async fn create_user(
-  mut cli: PgClient,
-  login: String,
-  pass: String,
-  cc_key: String,
+    mut cli: PgClient,
+    login: String,
+    pass: String,
+    cc_key: String,
 ) -> Result<i64, PgError> {
   let salt = gen_salt();
   let pass = String::from_utf8(Vec::from(bcrypt(10, &salt, &pass).unwrap())).unwrap();
@@ -55,4 +55,13 @@ pub async fn create_user(
   let j = serde_json::to_string(&auth_data).unwrap();
   cli.execute("insert into users values (\"\", $1);", &[&j]).await?;
   Ok(id)
+}
+
+pub async fn create_page(
+    mut cli: PgClient,
+    auth: TokenAuth,
+    title: String,
+    color_set: ColorSet,
+) -> Result<i64, PgError> {
+  
 }

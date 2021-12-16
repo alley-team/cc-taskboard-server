@@ -2,3 +2,5 @@
 Cargo.lock
 app_config.json
 src/.directory
+.directory
+api-examples/page_example.json
