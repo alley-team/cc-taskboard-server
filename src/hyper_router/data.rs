@@ -1,39 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc, serde::ts_seconds};
 
-/// Сведения аутентификации администратора.
-#[derive(Deserialize, Serialize)]
-pub struct AdminAuth {
-  pub key: String,
-}
-
-/// Токен авторизации. Используется при необходимости получить/передать данные.
-#[derive(Deserialize, Serialize)]
-pub struct TokenAuth {
-  pub id: i64,
-  pub token: String,
-}
-
-/// Токены аутентификации.
-#[derive(Deserialize, Serialize, Clone)]
-pub struct Token {
-  /// Уникальный идентификатор
-  pub tk: String,
-  /// Дата и время последнего использования токена.
-  /// WARNING Токены действительны не более пяти дней, в течение которых вы ими не пользуетесь.
-  #[serde(with = "ts_seconds")]
-  pub from_dt: DateTime<Utc>,
-}
-
-/// Сведения авторизации пользователя.
-#[derive(Deserialize, Serialize)]
-pub struct UserAuthData {
-  pub login: String,
-  pub pass: String,
-  pub cc_key: String,
-  pub tokens: Vec<Token>,
-}
-
 /// Набор цветов для раскраски компонента.
 #[derive(Deserialize, Serialize)]
 pub struct ColorSet {
@@ -109,8 +76,4 @@ pub struct User {
   pub id: i64,
   pub shared_pages: Vec<i64>,
   pub auth_data: UserAuthData,
-}
-
-pub fn parse_admin_auth_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
-  Ok(serde_json::from_str::<AdminAuth>(&String::from_utf8(bytes.to_vec()).unwrap())?.key)
 }
