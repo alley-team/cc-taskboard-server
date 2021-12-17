@@ -15,7 +15,7 @@ pub struct TokenAuth {
 }
 
 /// Токены аутентификации.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Token {
   /// Уникальный идентификатор
   pub tk: String,
@@ -112,5 +112,5 @@ pub struct User {
 }
 
 pub fn parse_admin_auth_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
-  Ok(serde_json::from_str(&String::from_utf8(bytes.to_vec()).unwrap())?.key)
+  Ok(serde_json::from_str::<AdminAuth>(&String::from_utf8(bytes.to_vec()).unwrap())?.key)
 }
