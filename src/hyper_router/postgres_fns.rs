@@ -20,6 +20,9 @@ pub async fn db_setup(mut cli: PgClient) -> Result<(), PgError> {
   Ok(())
 }
 
+/// Регистрирует ключ.
+///
+/// WARNING: один ключ работает для одной регистрации. После регистрации ключ удаляется из БД.
 pub async fn register_new_cc_key(mut cli: PgClient) -> Result<String, PgError> {
   let pg = PasswordGenerator {
     length: 64,
@@ -35,6 +38,13 @@ pub async fn register_new_cc_key(mut cli: PgClient) -> Result<String, PgError> {
   cli.transaction().await?;
   cli.execute("insert into cc_keys values ($2);", &[&key]).await?;
   Ok(key)
+}
+
+/// Проверяет наличие ключа в БД.
+pub async fn check_cc_key(mut cli: PgClient, some_key: String) -> Result<i64, PgError> {
+  cli.transaction().await?;
+  let id = cli.query_one("select id from cc_keys where key = $1;", &[&some_key]).await?;
+  Ok(id.get(0))
 }
 
 /// Создаёт пользователя.

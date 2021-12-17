@@ -1,10 +1,12 @@
 use tokio_postgres::{NoTls, Client as PgClient};
-use hyper::{Body, Method};
 use std::net::SocketAddr;
+use hyper::{Body, Method};
+use hyper::body::to_bytes as body_to_bytes;
 use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
 
 mod data;
 mod postgres_fns;
+mod std_routes;
 use super::setup::AppConfig;
 
 //! Модуль hyper_router отвечает за управление аутентификацией и вызов необходимых методов работы с базами данных.
@@ -16,44 +18,40 @@ struct Workspace {
   cnf: AppConfig,
 }
 
-/// Выдаёт информацию об ошибке.
-fn route_404() -> Response<Body> {
-  Response::builder()
-    .status(StatusCode::NOT_FOUND)
-    .body(Body::empty()).unwrap()
-}
-
 /// Отвечает за авторизацию администратора и первоначальную настройку базы данных.
 async fn db_setup_route(ws: Workspace) -> HttpResult<Response<Body>> {
   Ok(Response::builder()
-    .status(match hyper::body::to_bytes(ws.req.into_body()).await {
-      Err(_) => StatusCode::UNAUTHORIZED,
-      Ok(bytes) => match data::parse_admin_auth_key(bytes).unwrap() == ws.cnf.admin_key {
-        false => StatusCode::UNAUTHORIZED,
-        true => match postgres_fns::db_setup(ws.cli).await {
-          Ok(_) => StatusCode::OK,
-          Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        }
+    .status(match data::parse_admin_auth_key(
+                    body_to_bytes(ws.req.into_body()).await).unwrap() == ws.cnf.admin_key {
+      false => StatusCode::UNAUTHORIZED,
+      true => match postgres_fns::db_setup(ws.cli).await {
+        Ok(_) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
       }
     })
     .body(Body::empty())?)
 }
 
-/// Отвечает за регистрацию нового пользователя.
+/// Отвечает за регистрацию нового пользователя. 
+/// 
+/// Поведение (при условии валидности всех остальных данных):
+/// 1. Создаёт аккаунт и возвращает данные аутентификации (новый токен и идентификатор), если отсутствуют данные о токенах.
+/// 2. Обновляет данные о токенах, если аккаунт существует, и токены переданы.
+/// 3. Создаёт аккаунт и запоминает переданные токены, возвращая только идентификатор, если аккаунта не существует и токены (хотя бы один) переданы.
 async fn sign_up_route(ws: Workspace) -> HttpResult<Response<Body>> {
-  
+  let builder = Response::builder();
+  match serde_json::from_str<UserAuthData>(&String::from_utf8(
+    body_to_bytes(ws.req.into_body()).await.to_vec()).unwrap())
+  {
+    Err(_) => builder.status(StatusCode::BAD_REQUEST).body(Body::empty())?,
+    Ok(user_auth) => match postgres_fns::check_cc_key(user_auth.cc_key).await {
+      Err(_) => builder.status(StatusCode::UNAUTHORIZED).body(Body::empty())?,
+    },
+  }
 }
 
 /// Отвечает за аутентификацию пользователей в приложении.
 
-
-/// Если функция вернула Result::Ok(resp), возвращает resp; иначе - 404.
-fn ok_or_404(response: HttpResult<Response<Body>>) -> Response<Body> {
-  match response {
-    Ok(resp) => resp,
-    _ => route_404(),
-  }
-}
 
 // Публичные функции:
 
@@ -76,8 +74,8 @@ pub async fn router(
   });
   let ws = Workspace { req, cli, cnf };
   Ok(match (req.method(), req.uri().path()) {
-    (&Method::POST, "/pg-setup") => ok_or_404(db_setup_route(ws).await),
-    (&Method::POST, "/auth") => ok_or_404(sign_up_route(ws).await),
-    _ => route_404(),
+    (&Method::POST, "/pg-setup") => std_routes::ok_or_401(db_setup_route(ws).await),
+    (&Method::POST, "/sign-up") => std_routes::ok_or_400(sign_up_route(ws).await),
+    _ => std_routes::route_404(),
   })
 }
