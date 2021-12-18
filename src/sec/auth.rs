@@ -15,7 +15,7 @@ pub struct UserAuth {
 }
 
 /// Токен авторизации. Используется при необходимости получить/передать данные.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct TokenAuth {
   pub id: i64,
   pub token: String,

@@ -42,12 +42,17 @@ fn stdin_setup() -> Result<AppConfig, Box<dyn std::error::Error>> {
 }
 
 /// Считывает информацию из данного файла.
+/// 
+/// WARNING Честно говоря, не лучший подход к проверке конфигурации на валидность, поскольку никто не проверяет строку Postgres.
 fn parse_cfg_file(filepath: String) -> Result<AppConfig, Box<dyn std::error::Error>> {
   let mut file = fs::File::open(filepath)?;
   let mut buffer = String::new();
   file.read_to_string(&mut buffer)?;
   let conf: AppConfig = serde_json::from_str(&buffer)?;
-  Ok(conf)
+  match conf.admin_key.len() < 64 {
+    true => Err(Box::new(IOErr::new(IOErrKind::Other, "Длина ключа администратора меньше 64 символов."))),
+    false => Ok(conf),
+  }
 }
 
 /// Возвращает конфигурацию для запуска сервера.

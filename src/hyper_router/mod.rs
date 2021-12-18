@@ -8,11 +8,10 @@ use hyper::body::to_bytes as body_to_bytes;
 use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
 
 pub mod data;
-pub mod auth;
 mod std_routes;
 
 use crate::psql_handler;
-use crate::sec::auth::{UserAuth, RegisterUserData};
+use crate::sec::auth::{parse_admin_auth_key, TokenAuth, UserAuth, RegisterUserData};
 use crate::sec::tokens_vld;
 use crate::setup::AppConfig;
 
@@ -28,8 +27,7 @@ struct Workspace {
 /// Отвечает за авторизацию администратора и первоначальную настройку базы данных.
 async fn db_setup_route(ws: Workspace) -> HttpResult<Response<Body>> {
   Ok(Response::builder()
-    .status(match data::parse_admin_auth_key(
-                    body_to_bytes(ws.req.into_body()).await.unwrap()).unwrap() == ws.cnf.admin_key {
+    .status(match parse_admin_auth_key(body_to_bytes(ws.req.into_body()).await.unwrap()).unwrap() == ws.cnf.admin_key {
       false => StatusCode::UNAUTHORIZED,
       true => match psql_handler::db_setup(ws.cli).await {
         Ok(_) => StatusCode::OK,
@@ -50,14 +48,14 @@ async fn sign_up_route(ws: Workspace) -> HttpResult<Response<Body>> {
     Ok(register_data) => match psql_handler::check_cc_key(Arc::clone(&ws.cli), register_data.cc_key.clone()).await {
       Err(_) => std_routes::route_401(),
       Ok(key_id) => {
-        if let Err(res) = psql_handler::remove_cc_key(Arc::clone(&ws.cli), key_id).await {
+        if let Err(_) = psql_handler::remove_cc_key(Arc::clone(&ws.cli), key_id).await {
           return Ok(std_routes::route_401());
         };
         match psql_handler::create_user(Arc::clone(&ws.cli), register_data).await {
           Err(_) => std_routes::route_500(),
           Ok(id) => match psql_handler::get_new_token(Arc::clone(&ws.cli), id).await {
             Err(_) => std_routes::route_500(),
-            Ok(token_auth) => Response::new(Body::from(token_auth)),
+            Ok(token_auth) => Response::new(Body::from(serde_json::to_string(&token_auth).unwrap())),
           },
         }
       }
@@ -78,8 +76,8 @@ async fn sign_in_route(ws: Workspace) -> HttpResult<Response<Body>> {
           std_routes::route_401()
         } else { 
           match psql_handler::get_new_token(Arc::clone(&ws.cli), id).await {
-            Err(_) => std_routes::route_500,
-            Ok(token_auth) => Response::new(Body::from(token_auth)),
+            Err(_) => std_routes::route_500(),
+            Ok(token_auth) => Response::new(Body::from(serde_json::to_string(&token_auth).unwrap())),
           }
         }
       },
@@ -96,13 +94,21 @@ async fn create_page_route(ws: Workspace) -> HttpResult<Response<Body>> {
   {
     Err(_) => std_routes::route_400(),
     Ok(create_page_task) => {
-      let token_auth: TokenAuth = serde_json::from_str(create_page_task["token_auth"]);
+      let token_auth: serde_json::Result<TokenAuth> = serde_json::from_str(&serde_json::to_string(&create_page_task["token_auth"]).unwrap());
       match token_auth {
         Err(_) => std_routes::route_400(),
-        Ok(token_auth) => match tokens_vld::verify_token(Arc::clone(&ws.cli), token_auth) {
+        Ok(token_auth) => match tokens_vld::verify_token(Arc::clone(&ws.cli), token_auth.clone()).await {
           false => std_routes::route_401(),
-          true => match psql_handler::
-        }
+          true => {
+            let title: String = create_page_task["title"].as_str().unwrap().to_string(); 
+            let background_color = create_page_task["background_color"].as_str().unwrap().to_string();
+            match psql_handler::create_page(Arc::clone(&ws.cli), token_auth.id, title, background_color).await {
+              Err(_) => std_routes::route_500(),
+              Ok(-1) => std_routes::route_400(),
+              Ok(id) => Response::new(Body::from(id.to_string())),
+            }
+          },
+        },
       }
     },
   })
