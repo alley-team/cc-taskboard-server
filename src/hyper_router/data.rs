@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc, serde::ts_seconds};
+
+use crate::sec::auth::UserAuthData;
 
 /// Набор цветов для раскраски компонента.
 #[derive(Deserialize, Serialize)]
@@ -30,6 +31,7 @@ pub struct Tag {
 #[derive(Deserialize, Serialize)]
 pub struct Subtask {
   pub id: i64,
+  pub author: i64,
   pub title: String,
   pub executors: Vec<i64>,
   pub exec: bool,
@@ -42,6 +44,7 @@ pub struct Subtask {
 #[derive(Deserialize, Serialize)]
 pub struct Task {
   pub id: i64,
+  pub author: i64,
   pub title: String,
   pub executors: Vec<i64>,
   pub exec: bool,
@@ -56,6 +59,7 @@ pub struct Task {
 #[derive(Deserialize, Serialize)]
 pub struct Board {
   pub id: i64,
+  pub author: i64,
   pub title: String,
   pub tasks: Vec<Task>,
   pub color_set: ColorSet,
@@ -65,6 +69,7 @@ pub struct Board {
 #[derive(Deserialize, Serialize)]
 pub struct Page {
   pub id: i64,
+  pub author: i64,
   pub title: String,
   pub boards: Vec<Board>,
   pub background_color: String,

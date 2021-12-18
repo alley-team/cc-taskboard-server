@@ -11,8 +11,9 @@ pub mod data;
 pub mod auth;
 mod std_routes;
 
-use crate::hyper_router::auth::UserAuthData;
 use crate::psql_handler;
+use crate::sec::auth::{UserAuth, RegisterUserData};
+use crate::sec::tokens_vld;
 use crate::setup::AppConfig;
 
 type PgClient = Arc<Mutex<tokio_postgres::Client>>;
@@ -70,7 +71,40 @@ async fn sign_in_route(ws: Workspace) -> HttpResult<Response<Body>> {
     body_to_bytes(ws.req.into_body()).await.unwrap().to_vec()).unwrap())
   {
     Err(_) => std_routes::route_400(),
-    Ok(user_auth) => match psql_handler::
+    Ok(user_auth) => match psql_handler::user_credentials_to_id(Arc::clone(&ws.cli), user_auth).await {
+      Err(_) => std_routes::route_401(),
+      Ok(id) => {
+        if id == -1 {
+          std_routes::route_401()
+        } else { 
+          match psql_handler::get_new_token(Arc::clone(&ws.cli), id).await {
+            Err(_) => std_routes::route_500,
+            Ok(token_auth) => Response::new(Body::from(token_auth)),
+          }
+        }
+      },
+    },
+  })
+}
+
+// Все следующие методы обязаны содержать в теле запроса JSON с TokenAuth.
+
+/// Создаёт пейдж для пользователя.
+async fn create_page_route(ws: Workspace) -> HttpResult<Response<Body>> {
+  Ok(match serde_json::from_str::<serde_json::Value>(&String::from_utf8(
+    body_to_bytes(ws.req.into_body()).await.unwrap().to_vec()).unwrap())
+  {
+    Err(_) => std_routes::route_400(),
+    Ok(create_page_task) => {
+      let token_auth: TokenAuth = serde_json::from_str(create_page_task["token_auth"]);
+      match token_auth {
+        Err(_) => std_routes::route_400(),
+        Ok(token_auth) => match tokens_vld::verify_token(Arc::clone(&ws.cli), token_auth) {
+          false => std_routes::route_401(),
+          true => match psql_handler::
+        }
+      }
+    },
   })
 }
 

@@ -4,6 +4,7 @@ extern crate chrono;
 mod hyper_cli;
 mod hyper_router;
 mod psql_handler;
+mod sec;
 mod setup;
 
 #[tokio::main]

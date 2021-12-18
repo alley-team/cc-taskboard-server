@@ -43,10 +43,8 @@ pub struct RegisterUserData {
 /// Сведения авторизации пользователя. Используется для хранения данных в БД, так как сохраняет токены.
 #[derive(Deserialize, Serialize)]
 pub struct UserAuthData {
-  pub login: String,
   pub salt: String,
   pub salted_pass: String,
-  pub cc_key: String,
   pub tokens: Vec<Token>,
 }
 
