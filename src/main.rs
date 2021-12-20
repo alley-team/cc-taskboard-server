@@ -1,8 +1,10 @@
-extern crate passwords;
+extern crate base64;
 extern crate chrono;
+extern crate passwords;
 
 mod hyper_cli;
 mod hyper_router;
+mod model;
 mod psql_handler;
 mod sec;
 mod setup;

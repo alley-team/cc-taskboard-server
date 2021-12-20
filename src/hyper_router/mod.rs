@@ -4,117 +4,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use hyper::{Body, Method};
-use hyper::body::to_bytes as body_to_bytes;
-use hyper::http::{Request, Response, StatusCode, Result as HttpResult};
+use hyper::http::{Request, Response};
 
-pub mod data;
-mod std_routes;
+mod resp;
+mod routes;
 
-use crate::psql_handler;
-use crate::sec::auth::{parse_admin_auth_key, TokenAuth, UserAuth, RegisterUserData};
-use crate::sec::tokens_vld;
+use crate::model::Workspace;
 use crate::setup::AppConfig;
 
 type PgClient = Arc<Mutex<tokio_postgres::Client>>;
-
-/// Объединяет окружение в одну структуру данных.
-struct Workspace {
-  req: Request<Body>,
-  cli: PgClient,
-  cnf: AppConfig,
-}
-
-/// Отвечает за авторизацию администратора и первоначальную настройку базы данных.
-async fn db_setup_route(ws: Workspace) -> HttpResult<Response<Body>> {
-  Ok(Response::builder()
-    .status(match parse_admin_auth_key(body_to_bytes(ws.req.into_body()).await.unwrap()).unwrap() == ws.cnf.admin_key {
-      false => StatusCode::UNAUTHORIZED,
-      true => match psql_handler::db_setup(ws.cli).await {
-        Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-      }
-    })
-    .body(Body::empty())?)
-}
-
-/// Отвечает за регистрацию нового пользователя. 
-/// 
-/// Создаёт аккаунт и возвращает данные аутентификации (новый токен и идентификатор).
-async fn sign_up_route(ws: Workspace) -> HttpResult<Response<Body>> {
-  Ok(match serde_json::from_str::<RegisterUserData>(&String::from_utf8(
-    body_to_bytes(ws.req.into_body()).await.unwrap().to_vec()).unwrap())
-  {
-    Err(_) => std_routes::route_400(),
-    Ok(register_data) => match psql_handler::check_cc_key(Arc::clone(&ws.cli), register_data.cc_key.clone()).await {
-      Err(_) => std_routes::route_401(),
-      Ok(key_id) => {
-        if let Err(_) = psql_handler::remove_cc_key(Arc::clone(&ws.cli), key_id).await {
-          return Ok(std_routes::route_401());
-        };
-        match psql_handler::create_user(Arc::clone(&ws.cli), register_data).await {
-          Err(_) => std_routes::route_500(),
-          Ok(id) => match psql_handler::get_new_token(Arc::clone(&ws.cli), id).await {
-            Err(_) => std_routes::route_500(),
-            Ok(token_auth) => Response::new(Body::from(serde_json::to_string(&token_auth).unwrap())),
-          },
-        }
-      }
-    },
-  })
-}
-
-/// Отвечает за аутентификацию пользователей в приложении.
-async fn sign_in_route(ws: Workspace) -> HttpResult<Response<Body>> {
-  Ok(match serde_json::from_str::<UserAuth>(&String::from_utf8(
-    body_to_bytes(ws.req.into_body()).await.unwrap().to_vec()).unwrap())
-  {
-    Err(_) => std_routes::route_400(),
-    Ok(user_auth) => match psql_handler::user_credentials_to_id(Arc::clone(&ws.cli), user_auth).await {
-      Err(_) => std_routes::route_401(),
-      Ok(id) => {
-        if id == -1 {
-          std_routes::route_401()
-        } else { 
-          match psql_handler::get_new_token(Arc::clone(&ws.cli), id).await {
-            Err(_) => std_routes::route_500(),
-            Ok(token_auth) => Response::new(Body::from(serde_json::to_string(&token_auth).unwrap())),
-          }
-        }
-      },
-    },
-  })
-}
-
-// Все следующие методы обязаны содержать в теле запроса JSON с TokenAuth.
-
-/// Создаёт пейдж для пользователя.
-async fn create_page_route(ws: Workspace) -> HttpResult<Response<Body>> {
-  Ok(match serde_json::from_str::<serde_json::Value>(&String::from_utf8(
-    body_to_bytes(ws.req.into_body()).await.unwrap().to_vec()).unwrap())
-  {
-    Err(_) => std_routes::route_400(),
-    Ok(create_page_task) => {
-      let token_auth: serde_json::Result<TokenAuth> = serde_json::from_str(&serde_json::to_string(&create_page_task["token_auth"]).unwrap());
-      match token_auth {
-        Err(_) => std_routes::route_400(),
-        Ok(token_auth) => match tokens_vld::verify_token(Arc::clone(&ws.cli), token_auth.clone()).await {
-          false => std_routes::route_401(),
-          true => {
-            let title: String = create_page_task["title"].as_str().unwrap().to_string(); 
-            let background_color = create_page_task["background_color"].as_str().unwrap().to_string();
-            match psql_handler::create_page(Arc::clone(&ws.cli), token_auth.id, title, background_color).await {
-              Err(_) => std_routes::route_500(),
-              Ok(-1) => std_routes::route_400(),
-              Ok(id) => Response::new(Body::from(id.to_string())),
-            }
-          },
-        },
-      }
-    },
-  })
-}
-
-// Публичные функции:
 
 /// Обрабатывает сигнал завершения работы сервера.
 pub async fn shutdown() {
@@ -128,7 +26,7 @@ pub async fn router(
     cnf: AppConfig,
     _addr: SocketAddr,
     req: Request<Body>
-) -> Result<Response<hyper::Body>, std::convert::Infallible> {
+) -> Result<Response<Body>, std::convert::Infallible> {
   let (cli, con) = tokio_postgres::connect(cnf.pg_config.as_str(), tokio_postgres::NoTls).await.unwrap();
   tokio::spawn(async move {
     if let Err(e) = con.await { eprintln!("Ошибка подключения к PostgreSQL: {}", e); }
@@ -136,10 +34,16 @@ pub async fn router(
   let cli = Arc::new(Mutex::new(cli));
   let ws = Workspace { req, cli: Arc::clone(&cli), cnf };
   Ok(match (ws.req.method(), ws.req.uri().path()) {
-    (&Method::POST, "/pg-setup") => std_routes::ok_or_401(db_setup_route(ws).await),
-    (&Method::POST, "/sign-up") => std_routes::ok_or_400(sign_up_route(ws).await),
-    (&Method::POST, "/sign-in") => std_routes::ok_or_401(sign_in_route(ws).await),
-    (&Method::POST, "/create-page") => std_routes::ok_or_401(create_page_route(ws).await),
-    _ => std_routes::route_404(),
+    (&Method::GET,    "/pg-setup")    => routes::db_setup(ws)    .await.unwrap(),
+    (&Method::PUT,    "/sign-up")     => routes::sign_up(ws)     .await.unwrap(),
+    (&Method::GET,    "/sign-in")     => routes::sign_in(ws)     .await.unwrap(),
+    (&Method::PUT,    "/board")       => routes::create_board(ws).await.unwrap(),
+    // TODO
+//     (&Method::PATCH,  "/board")       => ,
+//     (&Method::DELETE, "/board")       => ,
+//     (&Method::PUT,    "/card")        => ,
+//     (&Method::PATCH,  "/card")        => ,
+//     (&Method::DELETE, "/card")        => ,
+    _ => resp::from_code_and_msg(404, Some(String::from("Запрашиваемый ресурс не существует."))),
   })
 }

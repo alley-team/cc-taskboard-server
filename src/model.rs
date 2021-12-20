@@ -1,6 +1,20 @@
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use serde::{Deserialize, Serialize};
+use hyper::Body;
+use hyper::http::Request;
 
-use crate::sec::auth::UserAuthData;
+use crate::sec::auth::UserCredentials;
+use crate::setup::AppConfig;
+
+type PgClient = Arc<Mutex<tokio_postgres::Client>>;
+
+/// Объединяет окружение в одну структуру данных.
+pub struct Workspace {
+  pub req: Request<Body>,
+  pub cli: PgClient,
+  pub cnf: AppConfig,
+}
 
 /// Набор цветов для раскраски компонента.
 #[derive(Deserialize, Serialize)]
@@ -57,7 +71,7 @@ pub struct Task {
 
 /// Доска.
 #[derive(Deserialize, Serialize)]
-pub struct Board {
+pub struct Card {
   pub id: i64,
   pub author: i64,
   pub title: String,
@@ -67,11 +81,11 @@ pub struct Board {
 
 /// Страница.
 #[derive(Deserialize, Serialize)]
-pub struct Page {
+pub struct Board {
   pub id: i64,
   pub author: i64,
   pub title: String,
-  pub boards: Vec<Board>,
+  pub cards: Vec<Card>,
   pub background_color: String,
 }
 
@@ -79,6 +93,6 @@ pub struct Page {
 #[derive(Deserialize, Serialize)]
 pub struct User {
   pub id: i64,
-  pub shared_pages: Vec<i64>,
-  pub auth_data: UserAuthData,
+  pub shared_boards: Vec<i64>,
+  pub user_creds: UserCredentials,
 }

@@ -3,15 +3,8 @@ use chrono::{DateTime, Utc, serde::ts_seconds};
 
 /// Сведения аутентификации администратора.
 #[derive(Deserialize, Serialize)]
-pub struct AdminAuth {
+pub struct AdminCredentials {
   pub key: String,
-}
-
-/// Сведения авторизации пользователя. При входе в аккаунт преобразуются в id и токен (см. ниже).
-#[derive(Deserialize, Serialize)]
-pub struct UserAuth {
-  pub login: String,
-  pub pass: String,
 }
 
 /// Токен авторизации. Используется при необходимости получить/передать данные.
@@ -32,9 +25,16 @@ pub struct Token {
   pub from_dt: DateTime<Utc>,
 }
 
+/// Сведения авторизации пользователя. При входе в аккаунт преобразуются в id и токен (см. ниже).
+#[derive(Deserialize, Serialize)]
+pub struct SignInCredentials {
+  pub login: String,
+  pub pass: String,
+}
+
 /// Сведения пользователя для регистрации.
 #[derive(Deserialize, Serialize)]
-pub struct RegisterUserData {
+pub struct SignUpCredentials {
   pub login: String,
   pub pass: String,
   pub cc_key: String,
@@ -42,7 +42,7 @@ pub struct RegisterUserData {
 
 /// Сведения авторизации пользователя. Используется для хранения данных в БД, так как сохраняет токены.
 #[derive(Deserialize, Serialize)]
-pub struct UserAuthData {
+pub struct UserCredentials {
   pub salt: String,
   pub salted_pass: String,
   pub tokens: Vec<Token>,
@@ -60,6 +60,6 @@ pub struct AccountPlanDetails {
   pub last_payment: DateTime<Utc>,
 }
 
-pub fn parse_admin_auth_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
-  Ok(serde_json::from_str::<AdminAuth>(&String::from_utf8(bytes.to_vec()).unwrap())?.key)
+pub fn host_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
+  Ok(serde_json::from_str::<AdminCredentials>(&String::from_utf8(bytes.to_vec()).unwrap())?.key)
 }

@@ -1,4 +1,4 @@
-use std::{env, io, io::{Error as IOErr, ErrorKind as IOErrKind, Read}, process, fs, boxed::Box};
+use std::{env, io, io::Read, process, fs, boxed::Box};
 use serde::{Deserialize, Serialize};
 
 /// Данные приложения.
@@ -36,7 +36,8 @@ fn stdin_setup() -> Result<AppConfig, Box<dyn std::error::Error>> {
   stdin.read_line(&mut buffer)?;
   let admin_key = String::from(buffer.strip_suffix("\n").ok_or("")?);
   match admin_key.len() < 64 {
-    true => Err(Box::new(IOErr::new(IOErrKind::Other, "Длина ключа администратора меньше 64 символов."))),
+    true => Err(Box::new(io::Error::new(io::ErrorKind::Other, 
+                                        "Длина ключа администратора меньше 64 символов."))),
     false => Ok(AppConfig { pg_config, admin_key, hyper_port }),
   }
 }
@@ -50,7 +51,8 @@ fn parse_cfg_file(filepath: String) -> Result<AppConfig, Box<dyn std::error::Err
   file.read_to_string(&mut buffer)?;
   let conf: AppConfig = serde_json::from_str(&buffer)?;
   match conf.admin_key.len() < 64 {
-    true => Err(Box::new(IOErr::new(IOErrKind::Other, "Длина ключа администратора меньше 64 символов."))),
+    true => Err(Box::new(io::Error::new(io::ErrorKind::Other,
+                                        "Длина ключа администратора меньше 64 символов."))),
     false => Ok(conf),
   }
 }
