@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use hyper::Body;
 use hyper::http::Response;
+use serde_json::Value as JsonValue;
 
 use crate::hyper_router::resp;
 use crate::model::{extract, Board, Workspace};
@@ -74,8 +75,7 @@ pub async fn sign_in(ws: Workspace) -> Response<Body> {
 
 /* Все следующие методы обязаны содержать в теле запроса JSON с TokenAuth. */
 
-/// Создаёт пейдж для пользователя.
-/// TODO переделать аутентификацию через sec::auth::unwrap_id
+/// Создаёт доску для пользователя.
 pub async fn create_board(ws: Workspace) -> Response<Body> {
   let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
     Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
@@ -102,5 +102,32 @@ pub async fn create_board(ws: Workspace) -> Response<Body> {
     Err(_) => resp::from_code_and_msg(500, Some("База данных сгенерировала ошибку при создании доски.".into())),
     Ok(-1) => resp::from_code_and_msg(400, Some("Данные о новой доске некорректны.".into())),
     Ok(id) => resp::from_code_and_msg(200, Some(id.to_string())),
+  }
+}
+
+/// Патчит доску, изменяя в ней определённые свойства.
+/// 
+/// Для доски это - title и background_color. Дочерними карточками управляют методы карточек.
+/// 
+/// Запрос представляет из себя JSON с id доски. Изменения принимаются только тогда, когда автором доски является данный пользователь.
+pub async fn patch_board(ws: Workspace) -> Response<Body> {
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v,
+  };
+  let (valid, billed) = tokens_vld::verify_user(Arc::clone(&ws.cli), token_auth.clone()).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново.".into()));
+  };
+  let patch = match extract::<JsonValue>(ws.req).await {
+    Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.".into())),
+    Ok(v) => v,
+  };
+  if patch.get("board_id") == None {
+    return resp::from_code_and_msg(400, Some("Не получен board_id.".into()));
+  };
+  match psql_handler::apply_patch_on_board(Arc::clone(&ws.cli), token_auth.id, patch).await {
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.".into())),
+    Ok(_) => resp::from_code_and_msg(200, None),
   }
 }

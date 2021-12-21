@@ -37,7 +37,7 @@ pub async fn router(
     (&Method::GET,    "/sign-in")     => routes::sign_in(ws)     .await,
     (&Method::PUT,    "/board")       => routes::create_board(ws).await,
     // TODO
-//     (&Method::PATCH,  "/board")       => ,
+    (&Method::PATCH,  "/board")       => routes::patch_board(ws) .await,
 //     (&Method::DELETE, "/board")       => ,
 //     (&Method::PUT,    "/card")        => ,
 //     (&Method::PATCH,  "/card")        => ,

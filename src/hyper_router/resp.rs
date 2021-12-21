@@ -1,4 +1,4 @@
-use hyper::http::{Response, Result as HttpResult};
+use hyper::http::Response;
 use hyper::Body;
 
 /// Формирует ответ из кода HTTP.
