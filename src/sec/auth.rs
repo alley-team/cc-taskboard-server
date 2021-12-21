@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use chrono::{DateTime, Utc, serde::ts_seconds};
 
 /// Сведения аутентификации администратора.
@@ -60,6 +61,28 @@ pub struct AccountPlanDetails {
   pub last_payment: DateTime<Utc>,
 }
 
-pub fn host_key(bytes: hyper::body::Bytes) -> serde_json::Result<String> {
-  Ok(serde_json::from_str::<AdminCredentials>(&String::from_utf8(bytes.to_vec()).unwrap())?.key)
+/// Извлекает из запроса ключ администратора.
+pub fn extract_creds<T>(header: Option<&hyper::header::HeaderValue>) -> Result<T, ()> 
+  where
+    T: DeserializeOwned,
+{
+  let creds = match header {
+    None => return Err(()),
+    Some(v) => v,
+  };
+  let creds = match creds.to_str() {
+    Err(_) => return Err(()),
+    Ok(v) => String::from(v),
+  };
+  let creds = match base64::decode(&creds) {
+    Err(_) => return Err(()),
+    Ok(v) => match String::from_utf8(v) {
+      Err(_) => return Err(()),
+      Ok(v) => v,
+    },
+  };
+  match serde_json::from_str::<T>(&creds) {
+    Err(_) => return Err(()),
+    Ok(v) => Ok(v),
+  }
 }

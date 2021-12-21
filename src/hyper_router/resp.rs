@@ -13,14 +13,6 @@ pub fn from_code_and_msg(code: u16, msg: Option<String>) -> Response<Body> {
   }
 }
 
-/// Если функция вернула Result::Ok(resp), возвращает resp; иначе - формирует ответ из кода и сообщения.
-pub fn ok_or_resp(response: HttpResult<Response<Body>>, code: u16, msg: Option<String>) -> Response<Body> {
-  match response {
-    Ok(resp) => resp,
-    Err(_) => from_code_and_msg(code, msg),
-  }
-}
-
 // Выдаёт ошибук 400 BAD REQUEST.
 // Выдаёт ошибку 401 UNAUTHORIZED.
 // Выдаёт ошибку 402 PAYMENT REQUIRED.

@@ -3,6 +3,7 @@ use tokio::sync::Mutex;
 use tokio_postgres::Error as PgError;
 use chrono::Utc;
 
+use crate::model::Board;
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -124,15 +125,17 @@ pub async fn write_tokens(cli: PgClient, id: i64, tokens: Vec<Token>) -> Result<
 }
 
 /// Создаёт доску.
-pub async fn create_board(cli: PgClient, author: i64, title: String, background_color: String) -> Result<i64, PgError> {
-  if title.is_empty() || background_color.bytes().count() != 7 || background_color.chars().nth(0) != Some('#') {
+pub async fn create_board(cli: PgClient, author: i64, board: Board) -> Result<i64, PgError> {
+  if board.title.is_empty() || 
+     board.background_color.bytes().count() != 7 || 
+     board.background_color.chars().nth(0) != Some('#') {
     return Ok(-1);
   }
   let mut cli = cli.lock().await;
   cli.transaction().await?;
   let id = cli.query_one("select nextval(pg_get_serial_sequence('boards', 'id'));", &[]).await?;
   let id: i64 = id.get(0);
-  cli.execute("insert into boards values (default, $1, $2, '[]', $3);", &[&author, &title, &background_color]).await?;
+  cli.execute("insert into boards values (default, $1, $2, '[]', $3);", &[&author, &board.title, &board.background_color]).await?;
   Ok(id)
 }
 

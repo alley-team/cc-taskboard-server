@@ -1,8 +1,10 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use hyper::Body;
 use hyper::http::Request;
+use hyper::body::to_bytes;
 
 use crate::sec::auth::UserCredentials;
 use crate::setup::AppConfig;
@@ -95,4 +97,25 @@ pub struct User {
   pub id: i64,
   pub shared_boards: Vec<i64>,
   pub user_creds: UserCredentials,
+}
+
+/// Извлекает данные из тела HTTP-запроса.
+pub async fn extract<T>(req: Request<Body>) -> Result<T, ()>
+  where
+    T: DeserializeOwned,
+{
+  let body = req.into_body();
+  let body = match to_bytes(body).await {
+    Err(_) => return Err(()),
+    Ok(v) => v,
+  };
+  let body = match String::from_utf8(body.to_vec()) {
+    Err(_) => return Err(()),
+    Ok(v) => v.clone(),
+  };
+  let obj = serde_json::from_str::<T>(&body);
+  match obj {
+    Err(_) => return Err(()),
+    Ok(v) => Ok(v),
+  }
 }

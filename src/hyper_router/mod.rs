@@ -12,8 +12,6 @@ mod routes;
 use crate::model::Workspace;
 use crate::setup::AppConfig;
 
-type PgClient = Arc<Mutex<tokio_postgres::Client>>;
-
 /// Обрабатывает сигнал завершения работы сервера.
 pub async fn shutdown() {
   tokio::signal::ctrl_c()
@@ -34,10 +32,10 @@ pub async fn router(
   let cli = Arc::new(Mutex::new(cli));
   let ws = Workspace { req, cli: Arc::clone(&cli), cnf };
   Ok(match (ws.req.method(), ws.req.uri().path()) {
-    (&Method::GET,    "/pg-setup")    => routes::db_setup(ws)    .await.unwrap(),
-    (&Method::PUT,    "/sign-up")     => routes::sign_up(ws)     .await.unwrap(),
-    (&Method::GET,    "/sign-in")     => routes::sign_in(ws)     .await.unwrap(),
-    (&Method::PUT,    "/board")       => routes::create_board(ws).await.unwrap(),
+    (&Method::GET,    "/pg-setup")    => routes::db_setup(ws)    .await,
+    (&Method::PUT,    "/sign-up")     => routes::sign_up(ws)     .await,
+    (&Method::GET,    "/sign-in")     => routes::sign_in(ws)     .await,
+    (&Method::PUT,    "/board")       => routes::create_board(ws).await,
     // TODO
 //     (&Method::PATCH,  "/board")       => ,
 //     (&Method::DELETE, "/board")       => ,
