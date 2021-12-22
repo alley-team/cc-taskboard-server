@@ -5,7 +5,7 @@ use tokio::join;
 use tokio::sync::Mutex;
 use tokio_postgres::Error as PgError;
 
-use crate::model::Board;
+use crate::model::{Board, Card};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -16,15 +16,24 @@ type PgResult<T> = Result<T, PgError>;
 /// 
 /// Создаёт таблицы, которые будут предназначаться для хранения данных приложения.
 /// TODO Обработать все результаты выполнения запросов.
-pub async fn db_setup(cli: PgClient) -> PgResult<()> {
+pub async fn db_setup(cli: PgClient) -> PgResult<u64> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  join!(
+  let frs = join!(
       cli.execute("create table cc_keys (id bigserial, key varchar[64] unique);", &[]),
       cli.execute("create table users (id bigserial, login varchar[64] unique, shared_boards varchar, user_creds varchar, apd varchar);", &[]),
-      cli.execute("create table boards (id bigserial, author bigint, title varchar[64], cards varchar, background_color char[7]);", &[]),
+      cli.execute("create table boards (id bigserial, author bigint, shared_with varchar, title varchar[64], cards varchar, background_color char[7]);", &[]),
   );
-  Ok(())
+  if frs.0.is_err() {
+    return frs.0;
+  };
+  if frs.1.is_err() {
+    return frs.1;
+  };
+  if frs.2.is_err() {
+    return frs.2;
+  };
+  Ok(0)
 }
 
 /// Регистрирует ключ.
@@ -39,28 +48,25 @@ pub async fn register_new_cc_key(cli: PgClient) -> PgResult<String> {
 }
 
 /// Проверяет наличие ключа в БД.
-pub async fn check_cc_key(cli: PgClient, some_key: String) -> PgResult<i64> {
+pub async fn check_cc_key(cli: PgClient, some_key: &String) -> PgResult<i64> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  let id = cli.query_one("select id from cc_keys where key = $1;", &[&some_key]).await?;
+  let id = cli.query_one("select id from cc_keys where key = $1;", &[some_key]).await?;
   Ok(id.get(0))
 }
 
 /// Удаляет ключ после использования.
-pub async fn remove_cc_key(cli: PgClient, key_id: i64) -> PgResult<()> {
+pub async fn remove_cc_key(cli: PgClient, key_id: &i64) -> PgResult<()> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  cli.execute("remove from cc_keys where id = $1;", &[&key_id]).await?;
+  cli.execute("remove from cc_keys where id = $1;", &[key_id]).await?;
   Ok(())
 }
 
 /// Создаёт пользователя.
 /// 
 /// Функция генерирует соль, хэширует пароль и соль - и записывает в базу данных. Возвращает идентификатор пользователя.
-pub async fn create_user(
-    cli: PgClient,
-    su_creds: SignUpCredentials,
-) -> PgResult<i64> {
+pub async fn create_user(cli: PgClient, su_creds: &SignUpCredentials) -> PgResult<i64> {
   let mut cli = cli.lock().await;
   let (salt, salted_pass) = key_gen::salt_pass(su_creds.pass.clone()).unwrap();
   cli.transaction().await?;
@@ -73,60 +79,59 @@ pub async fn create_user(
 }
 
 /// Возвращает идентификатор пользователя по логину и паролю.
-pub async fn sign_in_creds_to_id(cli: PgClient, si_creds: SignInCredentials) -> PgResult<i64> {
+pub async fn sign_in_creds_to_id(cli: PgClient, si_creds: &SignInCredentials) -> PgResult<i64> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
   let id: i64 = cli.query_one("select id from users where login = $1;",
                               &[&si_creds.login]).await?.get(0);
   let user_creds = cli.query_one("select user_creds from users where id = $1;", &[&id]).await?;
   let user_creds: UserCredentials = serde_json::from_str(user_creds.get(0)).unwrap();
-  Ok(match key_gen::check_pass(user_creds.salt, user_creds.salted_pass, si_creds.pass) {
+  Ok(match key_gen::check_pass(user_creds.salt, user_creds.salted_pass, &si_creds.pass) {
     true => id,
     false => -1,
   })
 }
 
 /// Создаёт новый токен и возвращает его.
-pub async fn get_new_token(cli: PgClient, id: i64) -> PgResult<TokenAuth> {
+pub async fn get_new_token(cli: PgClient, id: &i64) -> PgResult<TokenAuth> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  let user_creds = cli.query_one("select user_creds from users where id = $1;", &[&id]).await?;
+  let user_creds = cli.query_one("select user_creds from users where id = $1;", &[id]).await?;
   let mut user_creds: UserCredentials = serde_json::from_str(user_creds.get(0)).unwrap();
   let tk = key_gen::generate_strong(64).unwrap();
   let from_dt = Utc::now();
   let token = Token { tk, from_dt };
   user_creds.tokens.push(token.clone());
   let user_creds = serde_json::to_string(&user_creds).unwrap();
-  cli.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, &id]).await?;
-  let ta = TokenAuth { id, token: token.tk };
+  cli.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, id]).await?;
+  let ta = TokenAuth { id: *id, token: token.tk };
   Ok(ta)
 }
 
 /// Получает все токены пользователя.
-pub async fn get_tokens_and_billing(cli: PgClient, id: i64) 
-    -> PgResult<(Vec<Token>, AccountPlanDetails)> {
+pub async fn get_tokens_and_billing(cli: PgClient, id: &i64) -> PgResult<(Vec<Token>, AccountPlanDetails)> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  let user_data = cli.query_one("select user_creds, apd from users where id = $1;", &[&id]).await?;
+  let user_data = cli.query_one("select user_creds, apd from users where id = $1;", &[id]).await?;
   let user_creds: UserCredentials = serde_json::from_str(user_data.get(0)).unwrap();
   let billing: AccountPlanDetails = serde_json::from_str(user_data.get(1)).unwrap();
   Ok((user_creds.tokens, billing))
 }
 
 /// Обновляет все токены пользователя.
-pub async fn write_tokens(cli: PgClient, id: i64, tokens: Vec<Token>) -> PgResult<()> {
+pub async fn write_tokens(cli: PgClient, id: &i64, tokens: &Vec<Token>) -> PgResult<()> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  let user_creds = cli.query_one("select user_creds from users where id = $1;", &[&id]).await?;
+  let user_creds = cli.query_one("select user_creds from users where id = $1;", &[id]).await?;
   let mut user_creds: UserCredentials = serde_json::from_str(user_creds.get(0)).unwrap();
-  user_creds.tokens = tokens;
+  user_creds.tokens = tokens.clone();
   let user_creds = serde_json::to_string(&user_creds).unwrap();
-  cli.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, &id]).await?;
+  cli.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, id]).await?;
   Ok(())
 }
 
 /// Создаёт доску.
-pub async fn create_board(cli: PgClient, author: i64, board: Board) -> PgResult<i64> {
+pub async fn create_board(cli: PgClient, author: &i64, board: &Board) -> PgResult<i64> {
   if board.title.is_empty() || 
      board.background_color.bytes().count() != 7 || 
      board.background_color.chars().nth(0) != Some('#') {
@@ -136,12 +141,38 @@ pub async fn create_board(cli: PgClient, author: i64, board: Board) -> PgResult<
   cli.transaction().await?;
   let id = cli.query_one("select nextval(pg_get_serial_sequence('boards', 'id'));", &[]).await?;
   let id: i64 = id.get(0);
-  cli.execute("insert into boards values (default, $1, $2, '[]', $3);", &[&author, &board.title, &board.background_color]).await?;
+  cli.execute("insert into boards values (default, $1, '[]', $2, '[]', $3);", &[author, &board.title, &board.background_color]).await?;
   Ok(id)
 }
 
+/// Удостоверяется, что пользователь имеет право получать содержимое этой доски.
+pub async fn check_rights_on_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgResult<bool> {
+  let mut cli = cli.lock().await;
+  cli.transaction().await?;
+  let shared_with = cli.query_one("select shared_with from boards where id = $1;", &[board_id]).await?;
+  let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0)).unwrap();
+  match shared_with.iter().position(|id| *id == *user_id) {
+    None => Ok(false),
+    Some(_) => Ok(true),
+  }
+}
+
+/// Отдаёт доску пользователю.
+pub async fn get_board(cli: PgClient, board_id: &i64) -> PgResult<Board> {
+  let mut cli = cli.lock().await;
+  cli.transaction().await?;
+  let board_data = cli.query_one("select author, shared_with, title, cards, background_color from boards where id = $1;", &[board_id]).await?;
+  let author: i64 = board_data.get(0);
+  let shared_with: Vec<i64> = serde_json::from_str(board_data.get(1)).unwrap();
+  let title: String = board_data.get(2);
+  let cards: Vec<Card> = serde_json::from_str(board_data.get(3)).unwrap();
+  let background_color: String = board_data.get(4);
+  let board = Board { id: *board_id, author, shared_with, title, cards, background_color };
+  Ok(board)
+}
+
 /// Применяет патч на доску.
-pub async fn apply_patch_on_board(cli: PgClient, user_id: i64, patch: JsonValue) -> PgResult<bool> {
+pub async fn apply_patch_on_board(cli: PgClient, user_id: &i64, patch: &JsonValue) -> PgResult<bool> {
   let mut title_changed: bool = false;
   if patch.get("title") != None {
     title_changed = true;
@@ -161,7 +192,7 @@ pub async fn apply_patch_on_board(cli: PgClient, user_id: i64, patch: JsonValue)
   };
   let author_id = cli.query_one("select author from boards where id = $1;", &[&board_id]).await?;
   let author_id: i64 = author_id.get(0);
-  if user_id != author_id {
+  if *user_id != author_id {
     return Ok(false);
   };
   if title_changed {
@@ -175,18 +206,36 @@ pub async fn apply_patch_on_board(cli: PgClient, user_id: i64, patch: JsonValue)
   Ok(true)
 }
 
-/// Удаляет доску.
+/// Удаляет доску, если её автор - данный пользователь.
 /// 
 /// И обходит всех пользователей, удаляя у них id доски.
-pub async fn remove_board(cli: PgClient, board_id: i64) -> PgResult<()> {
-  Ok(())
+pub async fn remove_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgResult<bool> {
+  let mut cli = cli.lock().await;
+  cli.transaction().await?;
+  let author_id = cli.query_one("select author from boards where id = $1;", &[board_id]).await?;
+  let author_id: i64 = author_id.get(0);
+  if author_id != *user_id {
+    return Ok(false);
+  };
+  let shared_with = cli.query_one("select shared_with from board where id = $1;", &[board_id]).await?;
+  let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0)).unwrap();
+  for user_id in shared_with.iter() {
+    let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[&user_id]).await?;
+    let mut shared_boards: Vec<i64> = serde_json::from_str(shared_boards.get(0)).unwrap();
+    let this_board = shared_boards.iter().position(|id| *id == *board_id).unwrap();
+    shared_boards.swap_remove(this_board);
+    let shared_boards = serde_json::to_string(&shared_boards).unwrap();
+    cli.execute("update users set shared_boards = $1 where id = $2;", &[&shared_boards, &user_id]).await?;
+  };
+  cli.execute("remove from boards where id = $1;", &[board_id]).await?;
+  Ok(true)
 }
 
 /// Подсчитывает все доски пользователя.
-pub async fn count_boards(cli: PgClient, id: i64) -> PgResult<usize> {
+pub async fn count_boards(cli: PgClient, id: &i64) -> PgResult<usize> {
   let mut cli = cli.lock().await;
   cli.transaction().await?;
-  let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[&id]).await?;
-  let shared_boards: serde_json::Value = serde_json::from_str(shared_boards.get(0)).unwrap();
+  let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[id]).await?;
+  let shared_boards: JsonValue = serde_json::from_str(shared_boards.get(0)).unwrap();
   Ok(shared_boards.as_array().unwrap().len())
 }

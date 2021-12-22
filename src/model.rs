@@ -71,7 +71,7 @@ pub struct Task {
   pub color_set: ColorSet,
 }
 
-/// Доска.
+/// Карточка.
 #[derive(Deserialize, Serialize)]
 pub struct Card {
   pub id: i64,
@@ -81,11 +81,12 @@ pub struct Card {
   pub color_set: ColorSet,
 }
 
-/// Страница.
+/// Доска.
 #[derive(Deserialize, Serialize)]
 pub struct Board {
   pub id: i64,
   pub author: i64,
+  pub shared_with: Vec<i64>,
   pub title: String,
   pub cards: Vec<Card>,
   pub background_color: String,

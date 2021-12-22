@@ -12,8 +12,8 @@ use crate::sec::auth::TokenAuth;
 /// 
 /// TODO сделать Redis-подключение и хранить данные по токенам вместо того, чтобы каждый раз валидировать их через базу данных.
 /// WARNING проверка оплаты идёт каждый 31 день, а не ровно в день оплаты
-pub async fn verify_user(cli: PgClient, token_auth: TokenAuth) -> (bool, bool) {
-  let (mut tokens, billing) = get_tokens_and_billing(Arc::clone(&cli), token_auth.id).await.unwrap();
+pub async fn verify_user(cli: PgClient, token_auth: &TokenAuth) -> (bool, bool) {
+  let (mut tokens, billing) = get_tokens_and_billing(Arc::clone(&cli), &token_auth.id).await.unwrap();
   // 1. Проверка токенов
   let mut s: usize = 0;
   let mut i: usize = 0;
@@ -29,6 +29,7 @@ pub async fn verify_user(cli: PgClient, token_auth: TokenAuth) -> (bool, bool) {
     } else {
       if tokens[i].tk == token_auth.token {
         validated = true;
+        tokens[i].from_dt = Utc::now();
       }
       i += 1;
     }
@@ -45,8 +46,8 @@ pub async fn verify_user(cli: PgClient, token_auth: TokenAuth) -> (bool, bool) {
     billed = true;
   }
   // X. Возврат результатов
-  if s > 0 {
-    match write_tokens(Arc::clone(&cli), token_auth.id, tokens).await {
+  if (s > 0) || validated {
+    match write_tokens(Arc::clone(&cli), &token_auth.id, &tokens).await {
       Err(_) => (false, billed),
       Ok(_) => (validated, billed),
     }

@@ -20,6 +20,6 @@ pub fn salt_pass(pass: String) -> Result<(String, String), &'static str> {
   Ok((salt, salted_pass))
 }
 
-pub fn check_pass(salt: String, salted_pass: String, guessed_pass: String) -> bool {
+pub fn check_pass(salt: String, salted_pass: String, guessed_pass: &String) -> bool {
   String::from_utf8(Vec::from(bcrypt(10, &salt, &guessed_pass).unwrap())).unwrap() == salted_pass
 }
