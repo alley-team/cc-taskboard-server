@@ -38,10 +38,12 @@ pub async fn verify_user(cli: PgClient, token_auth: &TokenAuth) -> (bool, bool) 
   // 2. Проверка оплаты
   let mut billed: bool = false;
   if !billing.billed_forever {
-    let duration: Duration = Utc::now() - billing.last_payment;
-    if duration.num_days() < 31 {
-      billed = true;
-    } /* else {} */ // Если время истекло, нам нужно узнать у сервера, оплачен ли текущий месяц.
+    if billing.is_paid_whenever {
+      let duration: Duration = Utc::now() - billing.last_payment;
+      if duration.num_days() < 31 {
+        billed = true;
+      } /* else {} */ // Если время истекло, нам нужно узнать у сервера, оплачен ли текущий месяц.
+    }
   } else {
     billed = true;
   }

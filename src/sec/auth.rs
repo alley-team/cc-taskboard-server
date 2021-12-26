@@ -44,8 +44,8 @@ pub struct SignUpCredentials {
 /// Сведения авторизации пользователя. Используется для хранения данных в БД, так как сохраняет токены.
 #[derive(Deserialize, Serialize)]
 pub struct UserCredentials {
-  pub salt: String,
-  pub salted_pass: String,
+  pub salt: Vec<u8>,
+  pub salted_pass: Vec<u8>,
   pub tokens: Vec<Token>,
 }
 
@@ -56,6 +56,8 @@ pub struct AccountPlanDetails {
   pub billed_forever: bool,
   /// Данные, которые передаются на внешний API, чтобы узнать состояние подписки.
   pub payment_data: String,
+  /// Указывает на то, стоит ли доверять нижеуказанным данным.
+  pub is_paid_whenever: bool,
   /// Дата и время совершения последнего платежа (для ежемесячной подписки).
   #[serde(with = "ts_seconds")]
   pub last_payment: DateTime<Utc>,

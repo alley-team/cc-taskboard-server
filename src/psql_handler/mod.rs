@@ -18,11 +18,11 @@ type PgResult<T> = Result<T, PgError>;
 /// TODO Обработать все результаты выполнения запросов.
 pub async fn db_setup(cli: PgClient) -> PgResult<u64> {
   let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let tr = cli.transaction().await?;
   let frs = join!(
-      cli.execute("create table cc_keys (id bigserial, key varchar[64] unique);", &[]),
-      cli.execute("create table users (id bigserial, login varchar[64] unique, shared_boards varchar, user_creds varchar, apd varchar);", &[]),
-      cli.execute("create table boards (id bigserial, author bigint, shared_with varchar, title varchar[64], cards varchar, background_color char[7]);", &[]),
+      tr.execute("create table cc_keys (id bigserial, key varchar unique);", &[]),
+      tr.execute("create table users (id bigserial, login varchar unique, shared_boards varchar, user_creds varchar, apd varchar);", &[]),
+      tr.execute("create table boards (id bigserial, author bigint, shared_with varchar, title varchar, cards varchar, background_color varchar);", &[]),
   );
   if frs.0.is_err() {
     return frs.0;
@@ -33,6 +33,7 @@ pub async fn db_setup(cli: PgClient) -> PgResult<u64> {
   if frs.2.is_err() {
     return frs.2;
   };
+  tr.commit().await?;
   Ok(0)
 }
 
@@ -40,17 +41,17 @@ pub async fn db_setup(cli: PgClient) -> PgResult<u64> {
 ///
 /// WARNING: один ключ работает для одной регистрации. После регистрации ключ удаляется из БД.
 pub async fn register_new_cc_key(cli: PgClient) -> PgResult<String> {
-  let mut cli = cli.lock().await;
   let key = key_gen::generate_strong(64).unwrap();
-  cli.transaction().await?;
-  cli.execute("insert into cc_keys values (default, $1);", &[&key]).await?;
+  let mut cli = cli.lock().await;
+  let tr = cli.transaction().await?;
+  tr.execute("insert into cc_keys values (default, $1);", &[&key]).await?;
+  tr.commit().await?;
   Ok(key)
 }
 
 /// Проверяет наличие ключа в БД.
 pub async fn check_cc_key(cli: PgClient, some_key: &String) -> PgResult<i64> {
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let cli = cli.lock().await;
   let id = cli.query_one("select id from cc_keys where key = $1;", &[some_key]).await?;
   Ok(id.get(0))
 }
@@ -58,8 +59,9 @@ pub async fn check_cc_key(cli: PgClient, some_key: &String) -> PgResult<i64> {
 /// Удаляет ключ после использования.
 pub async fn remove_cc_key(cli: PgClient, key_id: &i64) -> PgResult<()> {
   let mut cli = cli.lock().await;
-  cli.transaction().await?;
-  cli.execute("remove from cc_keys where id = $1;", &[key_id]).await?;
+  let tr = cli.transaction().await?;
+  tr.execute("delete from cc_keys where id = $1;", &[key_id]).await?;
+  tr.commit().await?;
   Ok(())
 }
 
@@ -67,21 +69,28 @@ pub async fn remove_cc_key(cli: PgClient, key_id: &i64) -> PgResult<()> {
 /// 
 /// Функция генерирует соль, хэширует пароль и соль - и записывает в базу данных. Возвращает идентификатор пользователя.
 pub async fn create_user(cli: PgClient, su_creds: &SignUpCredentials) -> PgResult<i64> {
-  let mut cli = cli.lock().await;
   let (salt, salted_pass) = key_gen::salt_pass(su_creds.pass.clone()).unwrap();
-  cli.transaction().await?;
-  let id = cli.query_one("select nextval(pg_get_serial_sequence('users', 'id'));", &[]).await?;
+  let mut cli = cli.lock().await;
+  let tr = cli.transaction().await?;
+  let id = tr.query_one("select nextval(pg_get_serial_sequence('users', 'id'));", &[]).await?;
   let id: i64 = id.get(0);
   let user_creds = UserCredentials { salt, salted_pass, tokens: vec![] };
   let user_creds = serde_json::to_string(&user_creds).unwrap();
-  cli.execute("insert into users values (default, $2, '[]', $2, '{}');", &[&id, &su_creds.login, &user_creds]).await?;
+  let apd = AccountPlanDetails {
+    billed_forever: false,
+    payment_data: String::new(),
+    is_paid_whenever: false,
+    last_payment: Utc::now()
+  };
+  let apd = serde_json::to_string(&apd).unwrap();
+  tr.execute("insert into users values ($1, $2, '[]', $3, $4);", &[&id, &su_creds.login, &user_creds, &apd]).await?;
+  tr.commit().await?;
   Ok(id)
 }
 
 /// Возвращает идентификатор пользователя по логину и паролю.
 pub async fn sign_in_creds_to_id(cli: PgClient, si_creds: &SignInCredentials) -> PgResult<i64> {
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let cli = cli.lock().await;
   let id: i64 = cli.query_one("select id from users where login = $1;",
                               &[&si_creds.login]).await?.get(0);
   let user_creds = cli.query_one("select user_creds from users where id = $1;", &[&id]).await?;
@@ -95,7 +104,6 @@ pub async fn sign_in_creds_to_id(cli: PgClient, si_creds: &SignInCredentials) ->
 /// Создаёт новый токен и возвращает его.
 pub async fn get_new_token(cli: PgClient, id: &i64) -> PgResult<TokenAuth> {
   let mut cli = cli.lock().await;
-  cli.transaction().await?;
   let user_creds = cli.query_one("select user_creds from users where id = $1;", &[id]).await?;
   let mut user_creds: UserCredentials = serde_json::from_str(user_creds.get(0)).unwrap();
   let tk = key_gen::generate_strong(64).unwrap();
@@ -103,15 +111,16 @@ pub async fn get_new_token(cli: PgClient, id: &i64) -> PgResult<TokenAuth> {
   let token = Token { tk, from_dt };
   user_creds.tokens.push(token.clone());
   let user_creds = serde_json::to_string(&user_creds).unwrap();
-  cli.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, id]).await?;
+  let tr = cli.transaction().await?;
+  tr.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, id]).await?;
+  tr.commit().await?;
   let ta = TokenAuth { id: *id, token: token.tk };
   Ok(ta)
 }
 
 /// Получает все токены пользователя.
 pub async fn get_tokens_and_billing(cli: PgClient, id: &i64) -> PgResult<(Vec<Token>, AccountPlanDetails)> {
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let cli = cli.lock().await;
   let user_data = cli.query_one("select user_creds, apd from users where id = $1;", &[id]).await?;
   let user_creds: UserCredentials = serde_json::from_str(user_data.get(0)).unwrap();
   let billing: AccountPlanDetails = serde_json::from_str(user_data.get(1)).unwrap();
@@ -121,12 +130,13 @@ pub async fn get_tokens_and_billing(cli: PgClient, id: &i64) -> PgResult<(Vec<To
 /// Обновляет все токены пользователя.
 pub async fn write_tokens(cli: PgClient, id: &i64, tokens: &Vec<Token>) -> PgResult<()> {
   let mut cli = cli.lock().await;
-  cli.transaction().await?;
   let user_creds = cli.query_one("select user_creds from users where id = $1;", &[id]).await?;
   let mut user_creds: UserCredentials = serde_json::from_str(user_creds.get(0)).unwrap();
   user_creds.tokens = tokens.clone();
   let user_creds = serde_json::to_string(&user_creds).unwrap();
-  cli.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, id]).await?;
+  let tr = cli.transaction().await?;
+  tr.execute("update users set user_creds = $1 where id = $2;", &[&user_creds, id]).await?;
+  tr.commit().await?;
   Ok(())
 }
 
@@ -138,17 +148,17 @@ pub async fn create_board(cli: PgClient, author: &i64, board: &Board) -> PgResul
     return Ok(-1);
   }
   let mut cli = cli.lock().await;
-  cli.transaction().await?;
   let id = cli.query_one("select nextval(pg_get_serial_sequence('boards', 'id'));", &[]).await?;
   let id: i64 = id.get(0);
-  cli.execute("insert into boards values (default, $1, '[]', $2, '[]', $3);", &[author, &board.title, &board.background_color]).await?;
+  let tr = cli.transaction().await?;
+  tr.execute("insert into boards values ($1, $2, '[]', $3, '[]', $4);", &[&id, author, &board.title, &board.background_color]).await?;
+  tr.commit().await?;
   Ok(id)
 }
 
 /// Удостоверяется, что пользователь имеет право получать содержимое этой доски.
 pub async fn check_rights_on_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgResult<bool> {
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let cli = cli.lock().await;
   let shared_with = cli.query_one("select shared_with from boards where id = $1;", &[board_id]).await?;
   let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0)).unwrap();
   match shared_with.iter().position(|id| *id == *user_id) {
@@ -159,8 +169,7 @@ pub async fn check_rights_on_board(cli: PgClient, user_id: &i64, board_id: &i64)
 
 /// Отдаёт доску пользователю.
 pub async fn get_board(cli: PgClient, board_id: &i64) -> PgResult<Board> {
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let cli = cli.lock().await;
   let board_data = cli.query_one("select author, shared_with, title, cards, background_color from boards where id = $1;", &[board_id]).await?;
   let author: i64 = board_data.get(0);
   let shared_with: Vec<i64> = serde_json::from_str(board_data.get(1)).unwrap();
@@ -184,25 +193,26 @@ pub async fn apply_patch_on_board(cli: PgClient, user_id: &i64, patch: &JsonValu
   if !(title_changed || background_color_changed) {
     return Ok(true);
   };
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
   let board_id = match patch.get("board_id").unwrap().as_i64() {
     None => return Ok(false),
     Some(v) => v,
   };
+  let mut cli = cli.lock().await;
   let author_id = cli.query_one("select author from boards where id = $1;", &[&board_id]).await?;
   let author_id: i64 = author_id.get(0);
   if *user_id != author_id {
     return Ok(false);
   };
+  let tr = cli.transaction().await?;
   if title_changed {
     let title = String::from(patch.get("title").unwrap().as_str().unwrap());
-    cli.execute("update boards set title = $1 where id = $2;", &[&title, &board_id]).await?;
+    tr.execute("update boards set title = $1 where id = $2;", &[&title, &board_id]).await?;
   };
   if background_color_changed {
     let background_color = String::from(patch.get("background_color").unwrap().as_str().unwrap());
-    cli.execute("update boards set background_color = $1 where id = $2;", &[&background_color, &board_id]).await?;
+    tr.execute("update boards set background_color = $1 where id = $2;", &[&background_color, &board_id]).await?;
   };
+  tr.commit().await?;
   Ok(true)
 }
 
@@ -211,7 +221,6 @@ pub async fn apply_patch_on_board(cli: PgClient, user_id: &i64, patch: &JsonValu
 /// И обходит всех пользователей, удаляя у них id доски.
 pub async fn remove_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgResult<bool> {
   let mut cli = cli.lock().await;
-  cli.transaction().await?;
   let author_id = cli.query_one("select author from boards where id = $1;", &[board_id]).await?;
   let author_id: i64 = author_id.get(0);
   if author_id != *user_id {
@@ -219,22 +228,23 @@ pub async fn remove_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgRes
   };
   let shared_with = cli.query_one("select shared_with from board where id = $1;", &[board_id]).await?;
   let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0)).unwrap();
+  let tr = cli.transaction().await?;
   for user_id in shared_with.iter() {
-    let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[&user_id]).await?;
+    let shared_boards = tr.query_one("select shared_boards from users where id = $1;", &[&user_id]).await?;
     let mut shared_boards: Vec<i64> = serde_json::from_str(shared_boards.get(0)).unwrap();
     let this_board = shared_boards.iter().position(|id| *id == *board_id).unwrap();
     shared_boards.swap_remove(this_board);
     let shared_boards = serde_json::to_string(&shared_boards).unwrap();
-    cli.execute("update users set shared_boards = $1 where id = $2;", &[&shared_boards, &user_id]).await?;
+    tr.execute("update users set shared_boards = $1 where id = $2;", &[&shared_boards, &user_id]).await?;
   };
-  cli.execute("remove from boards where id = $1;", &[board_id]).await?;
+  tr.execute("delete from boards where id = $1;", &[board_id]).await?;
+  tr.commit().await?;
   Ok(true)
 }
 
 /// Подсчитывает все доски пользователя.
 pub async fn count_boards(cli: PgClient, id: &i64) -> PgResult<usize> {
-  let mut cli = cli.lock().await;
-  cli.transaction().await?;
+  let cli = cli.lock().await;
   let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[id]).await?;
   let shared_boards: JsonValue = serde_json::from_str(shared_boards.get(0)).unwrap();
   Ok(shared_boards.as_array().unwrap().len())

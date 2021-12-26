@@ -14,12 +14,12 @@ pub fn generate_strong(length: usize) -> Result<String, &'static str> {
   Ok(pg.generate_one()?)
 }
 
-pub fn salt_pass(pass: String) -> Result<(String, String), &'static str> {
-  let salt = String::from_utf8(Vec::from(gen_salt())).unwrap();
-  let salted_pass = String::from_utf8(Vec::from(bcrypt(10, &salt, &pass)?)).unwrap();
+pub fn salt_pass(pass: String) -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+  let salt = Vec::from(gen_salt());
+  let salted_pass = Vec::from(bcrypt(10, &salt, &pass)?);
   Ok((salt, salted_pass))
 }
 
-pub fn check_pass(salt: String, salted_pass: String, guessed_pass: &String) -> bool {
-  String::from_utf8(Vec::from(bcrypt(10, &salt, &guessed_pass).unwrap())).unwrap() == salted_pass
+pub fn check_pass(salt: Vec<u8>, salted_pass: Vec<u8>, guessed_pass: &String) -> bool {
+  Vec::from(bcrypt(10, &salt, &guessed_pass).unwrap()) == salted_pass
 }

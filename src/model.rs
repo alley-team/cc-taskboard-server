@@ -114,6 +114,13 @@ pub async fn extract<T>(req: Request<Body>) -> Result<T, ()>
     Err(_) => return Err(()),
     Ok(v) => v.clone(),
   };
+  let body = match base64::decode(&body) {
+    Err(_) => return Err(()),
+    Ok(v) => match String::from_utf8(v) {
+      Err(_) => return Err(()),
+      Ok(v) => v,
+    },
+  };
   let obj = serde_json::from_str::<T>(&body);
   match obj {
     Err(_) => return Err(()),

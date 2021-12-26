@@ -25,6 +25,21 @@ pub async fn db_setup(ws: Workspace) -> Response<Body> {
   resp::from_code_and_msg(status_code, None)
 }
 
+/// Генерирует новый ключ регистрации по запросу администратора.
+pub async fn get_new_cc_key(ws: Workspace) -> Response<Body> {
+  let admin_key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v.key,
+  };
+  if admin_key != ws.cnf.admin_key {
+    return resp::from_code_and_msg(401, None);
+  }
+  match psql_handler::register_new_cc_key(ws.cli).await {
+    Err(_) => resp::from_code_and_msg(500, None),
+    Ok(key) => resp::from_code_and_msg(200, Some(key)),
+  }
+}
+
 /// Отвечает за регистрацию нового пользователя. 
 /// 
 /// Создаёт аккаунт и возвращает данные аутентификации (новый токен и идентификатор).
@@ -34,14 +49,14 @@ pub async fn sign_up(ws: Workspace) -> Response<Body> {
     Ok(v) => v,
   };
   let cc_key_id = match psql_handler::check_cc_key(Arc::clone(&ws.cli), &su_creds.cc_key).await {
-    Err(_) => return resp::from_code_and_msg(401, Some("Ключ регистрации недействителен.".into())),
+    Err(_) => return resp::from_code_and_msg(401, Some("Ключ регистрации не найден.".into())),
     Ok(v) => v,
   };
   if su_creds.pass.len() < 8 {
     return resp::from_code_and_msg(400, Some("Пароль слишком короткий.".into()));
   };
   if let Err(_) = psql_handler::remove_cc_key(Arc::clone(&ws.cli), &cc_key_id).await {
-    return resp::from_code_and_msg(401, Some("Ключ регистрации недействителен.".into()));
+    return resp::from_code_and_msg(401, Some("Ключ регистрации не удалось удалить.".into()));
   };
   let id = match psql_handler::create_user(Arc::clone(&ws.cli), &su_creds).await {
     Err(_) => return resp::from_code_and_msg(500, Some("Не удалось создать пользователя.".into())),
@@ -162,5 +177,32 @@ pub async fn patch_board(ws: Workspace) -> Response<Body> {
   match psql_handler::apply_patch_on_board(ws.cli, &token_auth.id, &patch).await {
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.".into())),
     Ok(_) => resp::from_code_and_msg(200, None),
+  }
+}
+
+/// Удаляет доску.
+pub async fn delete_board(ws: Workspace) -> Response<Body> {
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v,
+  };
+  let (valid, _) = tokens_vld::verify_user(Arc::clone(&ws.cli), &token_auth).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново.".into()));
+  };
+  let patch = match extract::<JsonValue>(ws.req).await {
+    Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.".into())),
+    Ok(v) => v,
+  };
+  let board_id = match patch.get("board_id") {
+    None => return resp::from_code_and_msg(400, Some("Не получен board_id.".into())),
+    Some(id) => match id.as_i64() {
+      None => return resp::from_code_and_msg(400, None),
+      Some(id) => id,
+    },
+  };
+  match psql_handler::remove_board(ws.cli, &token_auth.id, &board_id).await {
+    Ok(_) => resp::from_code_and_msg(200, None),
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить доску.".into())),
   }
 }
