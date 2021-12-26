@@ -13,16 +13,17 @@ type PgClient = Arc<Mutex<tokio_postgres::Client>>;
 type PgResult<T> = Result<T, PgError>;
 
 /// Настраивает базу данных.
-/// 
+///
 /// Создаёт таблицы, которые будут предназначаться для хранения данных приложения.
 /// TODO Обработать все результаты выполнения запросов.
 pub async fn db_setup(cli: PgClient) -> PgResult<u64> {
   let mut cli = cli.lock().await;
   let tr = cli.transaction().await?;
   let frs = join!(
-      tr.execute("create table cc_keys (id bigserial, key varchar unique);", &[]),
-      tr.execute("create table users (id bigserial, login varchar unique, shared_boards varchar, user_creds varchar, apd varchar);", &[]),
-      tr.execute("create table boards (id bigserial, author bigint, shared_with varchar, title varchar, cards varchar, background_color varchar);", &[]),
+    tr.execute("create table if not exists cc_keys (id bigserial, key varchar unique);", &[]),
+    tr.execute("create table if not exists users (id bigserial, login varchar unique, shared_boards varchar, user_creds varchar, apd varchar);", &[]),
+    tr.execute("create table if not exists boards (id bigserial, author bigint, shared_with varchar, title varchar, cards varchar, background_color varchar);", &[]),
+    tr.execute("create table if not exists id_seqs (id varchar unique, val bigint);", &[]),
   );
   if frs.0.is_err() {
     return frs.0;
@@ -32,6 +33,9 @@ pub async fn db_setup(cli: PgClient) -> PgResult<u64> {
   };
   if frs.2.is_err() {
     return frs.2;
+  };
+  if frs.3.is_err() {
+    return frs.3;
   };
   tr.commit().await?;
   Ok(0)
@@ -66,7 +70,7 @@ pub async fn remove_cc_key(cli: PgClient, key_id: &i64) -> PgResult<()> {
 }
 
 /// Создаёт пользователя.
-/// 
+///
 /// Функция генерирует соль, хэширует пароль и соль - и записывает в базу данных. Возвращает идентификатор пользователя.
 pub async fn create_user(cli: PgClient, su_creds: &SignUpCredentials) -> PgResult<i64> {
   let (salt, salted_pass) = key_gen::salt_pass(su_creds.pass.clone()).unwrap();
@@ -217,8 +221,8 @@ pub async fn apply_patch_on_board(cli: PgClient, user_id: &i64, patch: &JsonValu
 }
 
 /// Удаляет доску, если её автор - данный пользователь.
-/// 
-/// И обходит всех пользователей, удаляя у них id доски.
+///
+/// И обходит всех пользователей, удаляя у них id доски. Также удаляет последовательности идентификаторов.
 pub async fn remove_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgResult<bool> {
   let mut cli = cli.lock().await;
   let author_id = cli.query_one("select author from boards where id = $1;", &[board_id]).await?;
@@ -238,6 +242,7 @@ pub async fn remove_board(cli: PgClient, user_id: &i64, board_id: &i64) -> PgRes
     tr.execute("update users set shared_boards = $1 where id = $2;", &[&shared_boards, &user_id]).await?;
   };
   tr.execute("delete from boards where id = $1;", &[board_id]).await?;
+  tr.execute("delete from id_seqs where id like concat($1, '%');", &[&board_id.to_string()]).await?;
   tr.commit().await?;
   Ok(true)
 }
@@ -248,4 +253,67 @@ pub async fn count_boards(cli: PgClient, id: &i64) -> PgResult<usize> {
   let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[id]).await?;
   let shared_boards: JsonValue = serde_json::from_str(shared_boards.get(0)).unwrap();
   Ok(shared_boards.as_array().unwrap().len())
+}
+
+/// Проверяет, есть ли доступ у пользователя к данной доске.
+pub async fn check_in_shared_with(cli: PgClient, user_id: &i64, board_id: &i64) -> PgResult<bool> {
+  let cli = cli.lock().await;
+  let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[user_id]).await?;
+  let shared_boards: Vec<i64> = serde_json::from_str(shared_boards.get(0)).unwrap();
+  if shared_boards.iter().position(|id| *id == *board_id).is_none() {
+    return Ok(false);
+  };
+  let shared_with = cli.query_one("select shared_with from boards where id = $1;", &[board_id]).await?;
+  let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0)).unwrap();
+  match shared_with.iter().position(|id| *id == *user_id) {
+    None => Ok(false),
+    Some(_) => Ok(true),
+  }
+}
+
+/// Добавляет карточку в доску.
+///
+/// WARNING Поскольку содержимое карточки валидируется при десериализации, его безопасно добавлять в базу данных. Но существует возможность добавления нескольких задач/подзадач с идентичными id, поэтому данная функция их переназначает.
+/// WARNING Помимо этого, по причине авторства пользователя переназначаются идентификаторы авторов во всех вложенных задачах и подзадачах.
+/// WARNING Функция не возвращает идентификаторы задач/подзадач, только id карточки.
+pub async fn insert_card(cli: PgClient, user_id: &i64, board_id: &i64, mut card: Card) -> PgResult<i64> {
+  let cards_id_seq = board_id.to_string();
+  let mut cli = cli.lock().await;
+  let mut next_card_id: i64 = match cli.query_one("select val from id_seqs where id = $1;", &[&cards_id_seq]).await {
+    Err(_) => 1,
+    Ok(res) => res.get(0),
+  };
+  let card_id = next_card_id;
+  card.id = next_card_id;
+  card.author = *user_id;
+  let tasks_id_seq = cards_id_seq.clone() + &next_card_id.to_string();
+  next_card_id += 1;
+  // Все таски и сабтаски у нас новые, поэтому будем обходить их с новыми подпоследовательностями.
+  let mut next_task_id: i64 = 1;
+  let tr = cli.transaction().await?;
+  for i in 0..card.tasks.len() {
+    card.tasks[i].id = next_task_id;
+    card.tasks[i].author = *user_id;
+    let subtasks_id_seq = tasks_id_seq.clone() + &next_task_id.to_string();
+    next_task_id += 1;
+    let mut next_subtask_id: i64 = 1;
+    for j in 0..card.tasks[i].subtasks.len() {
+      card.tasks[i].subtasks[j].id = next_subtask_id;
+      card.tasks[i].subtasks[j].author = *user_id;
+      next_subtask_id += 1;
+    };
+    tr.execute("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", &[&subtasks_id_seq, &next_subtask_id]).await?;
+  };
+  tr.execute("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", &[&tasks_id_seq, &next_task_id]).await?;
+  tr.execute("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", &[&cards_id_seq, &next_card_id]).await?;
+  let cards = tr.query_one("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = match serde_json::from_str(cards.get(0)) {
+    Err(_) => Vec::new(),
+    Ok(v) => v,
+  };
+  cards.push(card);
+  let cards = serde_json::to_string(&cards).unwrap();
+  tr.execute("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await?;
+  tr.commit().await?;
+  Ok(card_id)
 }

@@ -40,7 +40,7 @@ pub async fn router(
     (&Method::GET,    "/board")        => routes::get_board         (ws).await,
     (&Method::PATCH,  "/board")        => routes::patch_board       (ws).await,
     (&Method::DELETE, "/board")        => routes::delete_board      (ws).await,
-//     (&Method::PUT,    "/card")         => routes::create_card       (ws).await,
+    (&Method::PUT,    "/card")         => routes::create_card       (ws).await,
 //     (&Method::PATCH,  "/card")         => routes::patch_card        (ws).await,
 //     (&Method::DELETE, "/card")         => routes::delete_card       (ws).await,
 //     (&Method::PUT,    "/task")         => routes::create_task       (ws).await,

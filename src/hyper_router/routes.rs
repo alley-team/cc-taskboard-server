@@ -4,7 +4,7 @@ use hyper::http::Response;
 use serde_json::Value as JsonValue;
 
 use crate::hyper_router::resp;
-use crate::model::{extract, Board, Workspace};
+use crate::model::{extract, Board, Card, Workspace};
 use crate::psql_handler;
 use crate::sec::auth::{extract_creds, AdminCredentials, TokenAuth, SignInCredentials, SignUpCredentials};
 use crate::sec::tokens_vld;
@@ -41,7 +41,7 @@ pub async fn get_new_cc_key(ws: Workspace) -> Response<Body> {
 }
 
 /// Отвечает за регистрацию нового пользователя. 
-/// 
+///
 /// Создаёт аккаунт и возвращает данные аутентификации (новый токен и идентификатор).
 pub async fn sign_up(ws: Workspace) -> Response<Body> {
   let su_creds = match extract_creds::<SignUpCredentials>(ws.req.headers().get("App-Token")) {
@@ -154,9 +154,9 @@ pub async fn get_board(ws: Workspace) -> Response<Body> {
 }
 
 /// Патчит доску, изменяя в ней определённые свойства.
-/// 
+///
 /// Для доски это - title и background_color. Дочерними карточками управляют методы карточек.
-/// 
+///
 /// Запрос представляет из себя JSON с id доски. Изменения принимаются только тогда, когда автором доски является данный пользователь.
 pub async fn patch_board(ws: Workspace) -> Response<Body> {
   let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
@@ -204,5 +204,45 @@ pub async fn delete_board(ws: Workspace) -> Response<Body> {
   match psql_handler::remove_board(ws.cli, &token_auth.id, &board_id).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить доску.".into())),
+  }
+}
+
+/// Создаёт карточку в заданной доске.
+pub async fn create_card(ws: Workspace) -> Response<Body> {
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v,
+  };
+  let (valid, _) = tokens_vld::verify_user(Arc::clone(&ws.cli), &token_auth).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново.".into()));
+  };
+  let body = match extract::<JsonValue>(ws.req).await {
+    Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.".into())),
+    Ok(v) => v,
+  };
+  let board_id = match body.get("board_id") {
+    None => return resp::from_code_and_msg(400, Some("Не получен board_id.".into())),
+    Some(id) => match id.as_i64() {
+      None => return resp::from_code_and_msg(400, Some("board_id должен быть числом.".into())),
+      Some(id) => id,
+    },
+  };
+  let card: Card = match body.get("card") {
+    None => return resp::from_code_and_msg(400, Some("Не получена карточка.".into())),
+    Some(card) => match serde_json::from_value(card.clone()) {
+      Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать карточку.".into())),
+      Ok(card) => card,
+    },
+  };
+  let res = psql_handler::check_in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await;
+  if res.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску.".into()));
+  } else if res.unwrap() == false {
+    return resp::from_code_and_msg(401, Some("Пользователь не имеет права доступа к доске.".into()));
+  };
+  match psql_handler::insert_card(ws.cli, &token_auth.id, &board_id, card).await {
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось добавить карточку.".into())),
+    Ok(card_id) => resp::from_code_and_msg(200, Some(card_id.to_string())),
   }
 }

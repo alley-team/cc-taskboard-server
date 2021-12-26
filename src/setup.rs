@@ -43,7 +43,7 @@ fn stdin_setup() -> Result<AppConfig, Box<dyn std::error::Error>> {
 }
 
 /// Считывает информацию из данного файла.
-/// 
+///
 /// WARNING Честно говоря, не лучший подход к проверке конфигурации на валидность, поскольку никто не проверяет строку Postgres.
 fn parse_cfg_file(filepath: String) -> Result<AppConfig, Box<dyn std::error::Error>> {
   let mut file = fs::File::open(filepath)?;
