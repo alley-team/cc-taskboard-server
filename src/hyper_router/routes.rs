@@ -224,7 +224,7 @@ pub async fn create_card(ws: Workspace) -> Response<Body> {
       Some(id) => id,
     },
   };
-  if psql_handler::check_in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Пользователь не имеет доступа к доске.".into()));
   };
   let card: Card = match body.get("card") {
@@ -323,7 +323,7 @@ pub async fn create_task(ws: Workspace) -> Response<Body> {
       Some(v) => v,
     },
   };
-  if psql_handler::check_in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску.".into()));
   };
   let card_id = match body.get("card_id") {

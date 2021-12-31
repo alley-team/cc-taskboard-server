@@ -2,6 +2,7 @@ use chrono::Utc;
 use custom_error::custom_error;
 use serde_json::Value as JsonValue;
 use std::boxed::Box;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::join;
 use tokio::sync::Mutex;
@@ -264,7 +265,7 @@ pub async fn count_boards(cli: PgClient, id: &i64) -> MResult<usize> {
 }
 
 /// Проверяет, есть ли доступ у пользователя к данной доске.
-pub async fn check_in_shared_with(cli: PgClient, user_id: &i64, board_id: &i64) -> MResult<()> {
+pub async fn in_shared_with(cli: PgClient, user_id: &i64, board_id: &i64) -> MResult<()> {
   let cli = cli.lock().await;
   let shared_boards = cli.query_one("select shared_boards from users where id = $1;", &[user_id]).await?;
   let shared_boards: Vec<i64> = serde_json::from_str(shared_boards.get(0))?;
@@ -299,17 +300,34 @@ pub async fn insert_card(cli: PgClient, user_id: &i64, board_id: &i64, mut card:
   next_card_id += 1;
   // Все таски и сабтаски у нас новые, поэтому будем обходить их с новыми подпоследовательностями.
   let mut next_task_id: i64 = 1;
+  let shared_with = cli.query_one("select shared_with from boards where id = $1;", &[board_id]).await?;
+  let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0))?;
+  let shared_with: HashSet<i64> = shared_with.into_iter().collect();
   let tr = cli.transaction().await?;
   for i in 0..card.tasks.len() {
     card.tasks[i].id = next_task_id;
     card.tasks[i].author = *user_id;
     let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
     next_task_id += 1;
+    let mut executors: Vec<i64> = Vec::new();
+    for j in 0..card.tasks[i].executors.len() {
+      if shared_with.contains(&card.tasks[i].executors[j]) {
+        executors.push(card.tasks[i].executors[j]);
+      };
+    };
+    card.tasks[i].executors = executors;
     let mut next_subtask_id: i64 = 1;
     for j in 0..card.tasks[i].subtasks.len() {
       card.tasks[i].subtasks[j].id = next_subtask_id;
       card.tasks[i].subtasks[j].author = *user_id;
       next_subtask_id += 1;
+      let mut executors: Vec<i64> = Vec::new();
+      for k in 0..card.tasks[i].subtasks[j].executors.len() {
+        if shared_with.contains(&card.tasks[i].subtasks[j].executors[k]) {
+          executors.push(card.tasks[i].subtasks[j].executors[k]);
+        };
+      };
+      card.tasks[i].subtasks[j].executors = executors;
     };
     tr.execute("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", &[&subtasks_id_seq, &next_subtask_id]).await?;
   };
