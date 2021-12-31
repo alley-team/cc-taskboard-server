@@ -209,11 +209,17 @@ pub async fn apply_patch_on_board(cli: PgClient, user_id: &i64, patch: &JsonValu
   };
   let tr = cli.transaction().await?;
   if title_changed {
-    let title = String::from(patch.get("title").unwrap().as_str().unwrap());
+    let title: String = match patch.get("title").unwrap().as_str() {
+      None => return Ok(false),
+      Some(v) => String::from(v),
+    };
     tr.execute("update boards set title = $1 where id = $2;", &[&title, &board_id]).await?;
   };
   if background_color_changed {
-    let background_color = String::from(patch.get("background_color").unwrap().as_str().unwrap());
+    let background_color: String = match patch.get("background_color").unwrap().as_str() {
+      None => return Ok(false),
+      Some(v) => String::from(v),
+    };
     tr.execute("update boards set background_color = $1 where id = $2;", &[&background_color, &board_id]).await?;
   };
   tr.commit().await?;
@@ -286,7 +292,7 @@ pub async fn insert_card(cli: PgClient, user_id: &i64, board_id: &i64, mut card:
   let card_id = next_card_id;
   card.id = next_card_id;
   card.author = *user_id;
-  let tasks_id_seq = cards_id_seq.clone() + &next_card_id.to_string();
+  let tasks_id_seq = cards_id_seq.clone() + "_" + &next_card_id.to_string();
   next_card_id += 1;
   // Все таски и сабтаски у нас новые, поэтому будем обходить их с новыми подпоследовательностями.
   let mut next_task_id: i64 = 1;
@@ -294,7 +300,7 @@ pub async fn insert_card(cli: PgClient, user_id: &i64, board_id: &i64, mut card:
   for i in 0..card.tasks.len() {
     card.tasks[i].id = next_task_id;
     card.tasks[i].author = *user_id;
-    let subtasks_id_seq = tasks_id_seq.clone() + &next_task_id.to_string();
+    let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
     next_task_id += 1;
     let mut next_subtask_id: i64 = 1;
     for j in 0..card.tasks[i].subtasks.len() {
@@ -316,4 +322,88 @@ pub async fn insert_card(cli: PgClient, user_id: &i64, board_id: &i64, mut card:
   tr.execute("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await?;
   tr.commit().await?;
   Ok(card_id)
+}
+
+/// Применяет патч на карточку.
+pub async fn apply_patch_on_card(cli: PgClient, user_id: &i64, patch: &JsonValue) -> PgResult<bool> {
+  let mut title_changed: bool = false;
+  if patch.get("title") != None {
+    title_changed = true;
+  };
+  let mut background_color_changed: bool = false;
+  if patch.get("background_color") != None {
+    background_color_changed = true;
+  };
+  let mut text_color_changed: bool = false;
+  if patch.get("text_color") != None {
+    text_color_changed = true;
+  };
+  if !(title_changed || background_color_changed || text_color_changed) {
+    return Ok(true);
+  };
+  let board_id = match patch.get("board_id").unwrap().as_i64() {
+    None => return Ok(false),
+    Some(v) => v,
+  };
+  let card_id = match patch.get("card_id").unwrap().as_i64() {
+    None => return Ok(false),
+    Some(v) => v,
+  };
+  let mut cli = cli.lock().await;
+  let res = cli.query_one("select author, cards from boards where id = $1;", &[&board_id]).await?;
+  let author_id: i64 = res.get(0);
+  if *user_id != author_id {
+    return Ok(false);
+  };
+  let mut cards: Vec<Card> = match serde_json::from_str(res.get(1)) {
+    Err(_) => return Ok(false),
+    Ok(v) => v,
+  };
+  let card_index: usize = match cards.iter().position(|c| (c.author == *user_id) && (c.id == card_id)) {
+    None => return Ok(false),
+    Some(v) => v,
+  };
+  if title_changed {
+    cards[card_index].title = match patch.get("title").unwrap().as_str() {
+      None => return Ok(false),
+      Some(v) => String::from(v),
+    };
+  };
+  if background_color_changed {
+    cards[card_index].color_set.background_color = match patch.get("background_color").unwrap().as_str() {
+      None => return Ok(false),
+      Some(v) => String::from(v),
+    };
+  };
+  if text_color_changed {
+    cards[card_index].color_set.text_color = match patch.get("text_color").unwrap().as_str() {
+      None => return Ok(false),
+      Some(v) => String::from(v),
+    };
+  };
+  let cards = serde_json::to_string(&cards).unwrap();
+  let tr = cli.transaction().await?;
+  tr.execute("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await?;
+  tr.commit().await?;
+  return Ok(true)
+}
+
+/// Удаляет карточку.
+pub async fn remove_card(cli: PgClient, board_id: &i64, card_id: &i64) -> PgResult<bool> {
+  let mut cli = cli.lock().await;
+  let cards = cli.query_one("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = match serde_json::from_str(cards.get(0)) {
+    Err(_) => return Ok(false),
+    Ok(v) => v,
+  };
+  let card_index: usize = match cards.iter().position(|c| (c.id == *card_id)) {
+    None => return Ok(false),
+    Some(v) => v,
+  };
+  cards.remove(card_index);
+  let cards = serde_json::to_string(&cards).unwrap();
+  let tr = cli.transaction().await?;
+  tr.execute("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await?;
+  tr.commit().await?;
+  return Ok(true)
 }

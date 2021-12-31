@@ -246,3 +246,65 @@ pub async fn create_card(ws: Workspace) -> Response<Body> {
     Ok(card_id) => resp::from_code_and_msg(200, Some(card_id.to_string())),
   }
 }
+
+/// Патчит карточку, изменяя определённые свойства в ней.
+///
+/// Для карточки это - title, background_color и text_color.
+pub async fn patch_card(ws: Workspace) -> Response<Body> {
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v,
+  };
+  let (valid, _) = tokens_vld::verify_user(Arc::clone(&ws.cli), &token_auth).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново.".into()));
+  };
+  let patch = match extract::<JsonValue>(ws.req).await {
+    Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.".into())),
+    Ok(v) => v,
+  };
+  if patch.get("board_id") == None {
+    return resp::from_code_and_msg(400, Some("Не получен board_id.".into()));
+  };
+  if patch.get("card_id") == None {
+    return resp::from_code_and_msg(400, Some("Не получен card_id.".into()));
+  };
+  match psql_handler::apply_patch_on_card(ws.cli, &token_auth.id, &patch).await {
+    Err(_) | Ok(false) => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.".into())),
+    Ok(true) => resp::from_code_and_msg(200, None),
+  }
+}
+
+/// Удаляет карточку.
+pub async fn delete_card(ws: Workspace) -> Response<Body> {
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v,
+  };
+  let (valid, _) = tokens_vld::verify_user(Arc::clone(&ws.cli), &token_auth).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново.".into()));
+  };
+  let body = match extract::<JsonValue>(ws.req).await {
+    Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.".into())),
+    Ok(v) => v,
+  };
+  let board_id = match body.get("board_id") {
+    None => return resp::from_code_and_msg(400, Some("Не получен board_id.".into())),
+    Some(v) => match v.as_i64() {
+      None => return resp::from_code_and_msg(400, Some("board_id должен быть числом.".into())),
+      Some(v) => v,
+    },
+  };
+  let card_id = match body.get("card_id") {
+    None => return resp::from_code_and_msg(400, Some("Не получен card_id.".into())),
+    Some(v) => match v.as_i64() {
+      None => return resp::from_code_and_msg(400, Some("card_id должен быть числом.".into())),
+      Some(v) => v,
+    },
+  };
+  match psql_handler::remove_card(ws.cli, &board_id, &card_id).await {
+    Err(_) | Ok(false) => resp::from_code_and_msg(500, Some("Не удалось удалить карточку.".into())),
+    Ok(true) => resp::from_code_and_msg(200, None),
+  }
+}
