@@ -4,7 +4,7 @@ use hyper::http::Response;
 use serde_json::Value as JsonValue;
 
 use crate::hyper_router::resp;
-use crate::model::{extract, Board, Card, Workspace};
+use crate::model::{extract, Board, Card, Task, Workspace};
 use crate::psql_handler;
 use crate::sec::auth::{extract_creds, AdminCredentials, TokenAuth, SignInCredentials, SignUpCredentials};
 use crate::sec::tokens_vld;
@@ -78,9 +78,6 @@ pub async fn sign_in(ws: Workspace) -> Response<Body> {
     Err(_) => return resp::from_code_and_msg(401, None),
     Ok(v) => v,
   };
-  if id == -1 {
-    return resp::from_code_and_msg(401, None);
-  };
   let token_auth = match psql_handler::get_new_token(ws.cli, &id).await {
     Err(_) => return resp::from_code_and_msg(500, None),
     Ok(v) => v,
@@ -117,8 +114,7 @@ pub async fn create_board(ws: Workspace) -> Response<Body> {
     };
   }
   match psql_handler::create_board(ws.cli, &token_auth.id, &board).await {
-    Err(_) => resp::from_code_and_msg(500, Some("База данных сгенерировала ошибку при создании доски.".into())),
-    Ok(-1) => resp::from_code_and_msg(400, Some("Данные о новой доске некорректны.".into())),
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось создать доску.".into())),
     Ok(id) => resp::from_code_and_msg(200, Some(id.to_string())),
   }
 }
@@ -228,18 +224,15 @@ pub async fn create_card(ws: Workspace) -> Response<Body> {
       Some(id) => id,
     },
   };
+  if psql_handler::check_in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Пользователь не имеет доступа к доске.".into()));
+  };
   let card: Card = match body.get("card") {
     None => return resp::from_code_and_msg(400, Some("Не получена карточка.".into())),
     Some(card) => match serde_json::from_value(card.clone()) {
       Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать карточку.".into())),
       Ok(card) => card,
     },
-  };
-  let res = psql_handler::check_in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await;
-  if res.is_err() {
-    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску.".into()));
-  } else if res.unwrap() == false {
-    return resp::from_code_and_msg(401, Some("Пользователь не имеет права доступа к доске.".into()));
   };
   match psql_handler::insert_card(ws.cli, &token_auth.id, &board_id, card).await {
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось добавить карточку.".into())),
@@ -270,8 +263,8 @@ pub async fn patch_card(ws: Workspace) -> Response<Body> {
     return resp::from_code_and_msg(400, Some("Не получен card_id.".into()));
   };
   match psql_handler::apply_patch_on_card(ws.cli, &token_auth.id, &patch).await {
-    Err(_) | Ok(false) => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.".into())),
-    Ok(true) => resp::from_code_and_msg(200, None),
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.".into())),
+    Ok(_) => resp::from_code_and_msg(200, None),
   }
 }
 
@@ -303,8 +296,52 @@ pub async fn delete_card(ws: Workspace) -> Response<Body> {
       Some(v) => v,
     },
   };
-  match psql_handler::remove_card(ws.cli, &board_id, &card_id).await {
-    Err(_) | Ok(false) => resp::from_code_and_msg(500, Some("Не удалось удалить карточку.".into())),
-    Ok(true) => resp::from_code_and_msg(200, None),
+  match psql_handler::remove_card(ws.cli, &token_auth.id, &board_id, &card_id).await {
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить карточку.".into())),
+    Ok(_) => resp::from_code_and_msg(200, None),
+  }
+}
+
+/// Создаёт задачу.
+pub async fn create_task(ws: Workspace) -> Response<Body> {
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Err(_) => return resp::from_code_and_msg(401, Some("Не получен валидный токен.".into())),
+    Ok(v) => v,
+  };
+  let (valid, _) = tokens_vld::verify_user(Arc::clone(&ws.cli), &token_auth).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново.".into()));
+  };
+  let body = match extract::<JsonValue>(ws.req).await {
+    Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.".into())),
+    Ok(v) => v,
+  };
+  let board_id = match body.get("board_id") {
+    None => return resp::from_code_and_msg(400, Some("Не получен board_id.".into())),
+    Some(v) => match v.as_i64() {
+      None => return resp::from_code_and_msg(400, Some("board_id должен быть числом.".into())),
+      Some(v) => v,
+    },
+  };
+  if psql_handler::check_in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску.".into()));
+  };
+  let card_id = match body.get("card_id") {
+    None => return resp::from_code_and_msg(400, Some("Не получен card_id.".into())),
+    Some(v) => match v.as_i64() {
+      None => return resp::from_code_and_msg(400, Some("card_id должен быть числом.".into())),
+      Some(v) => v,
+    },
+  };
+  let task: Task = match body.get("task") {
+    None => return resp::from_code_and_msg(400, Some("Не получена задача.".into())),
+    Some(task) => match serde_json::from_value(task.clone()) {
+      Err(_) => return resp::from_code_and_msg(400, Some("Не удалось десериализовать задачу.".into())),
+      Ok(task) => task,
+    },
+  };
+  match psql_handler::insert_task(ws.cli, &token_auth.id, &board_id, &card_id, task).await {
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось добавить задачу.".into())),
+    Ok(task_id) => resp::from_code_and_msg(200, Some(task_id.to_string())),
   }
 }

@@ -1,5 +1,6 @@
 extern crate base64;
 extern crate chrono;
+extern crate custom_error;
 extern crate passwords;
 
 mod hyper_cli;

@@ -43,7 +43,7 @@ pub async fn router(
     (&Method::PUT,    "/card")         => routes::create_card       (ws).await,
     (&Method::PATCH,  "/card")         => routes::patch_card        (ws).await,
     (&Method::DELETE, "/card")         => routes::delete_card       (ws).await,
-//     (&Method::PUT,    "/task")         => routes::create_task       (ws).await,
+    (&Method::PUT,    "/task")         => routes::create_task       (ws).await,
 //     (&Method::PATCH,  "/task")         => routes::patch_task        (ws).await,
 //     (&Method::DELETE, "/task")         => routes::delete_task       (ws).await,
 //     (&Method::PATCH,  "/task/tags")    => routes::patch_task_tags   (ws).await,
