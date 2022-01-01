@@ -434,11 +434,13 @@ pub async fn insert_task(
 ) -> MResult<i64> {
   let tasks_id_seq = board_id.to_string() + "_" + &card_id.to_string();
   let mut cli = cli.lock().await;
-  let cards = cli.query_one("select cards from boards where id = $1;", &[board_id]).await?;
-  let mut cards: Vec<Card> = match serde_json::from_str(cards.get(0)) {
+  let data = cli.query_one("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = match serde_json::from_str(data.get(0)) {
     Err(_) => Vec::new(),
     Ok(v) => v,
   };
+  let shared_with: Vec<i64> = serde_json::from_str(data.get(1))?;
+  let shared_with: HashSet<i64> = shared_with.into_iter().collect();
   let mut next_task_id: i64 = match cli.query_one("select val from id_seqs where id = $1;", &[&tasks_id_seq]).await {
     Err(_) => 1,
     Ok(res) => res.get(0),
@@ -447,12 +449,26 @@ pub async fn insert_task(
   let task_id = next_task_id;
   task.author = *user_id;
   next_task_id += 1;
+  let mut executors: Vec<i64> = Vec::new();
+  for i in 0..task.executors.len() {
+    if shared_with.contains(&task.executors[i]) {
+      executors.push(task.executors[i]);
+    };
+  };
+  task.executors = executors;
   let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
   let mut next_subtask_id: i64 = 1;
-  for j in 0..task.subtasks.len() {
-    task.subtasks[j].id = next_subtask_id;
-    task.subtasks[j].author = *user_id;
+  for i in 0..task.subtasks.len() {
+    task.subtasks[i].id = next_subtask_id;
+    task.subtasks[i].author = *user_id;
     next_subtask_id += 1;
+    let mut executors: Vec<i64> = Vec::new();
+    for j in 0..task.subtasks[i].executors.len() {
+      if shared_with.contains(&task.subtasks[i].executors[j]) {
+        executors.push(task.subtasks[i].executors[j]);
+      };
+    };
+    task.subtasks[i].executors = executors;
   };
   let card_index: usize = cards.iter()
                                .position(|c| c.id == *card_id)
