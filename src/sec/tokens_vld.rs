@@ -1,3 +1,5 @@
+//! Отвечает за токены и оплату аккаунта.
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{Utc, Duration};

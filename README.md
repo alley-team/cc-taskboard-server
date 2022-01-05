@@ -297,6 +297,7 @@ cargo build --release
     "author": 1234567890,
     "title": "<Заголовок карточки>",
     "executors": [],
+    "exec": true/false,
     "subtasks": [{},{},{},],
     "notes": "<Заметки>",
     "tags": [{},{},{},],

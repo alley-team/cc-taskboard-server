@@ -1,3 +1,5 @@
+//! Сервер CC TaskBoard.
+
 use std::{env, io, io::Read, process, fs, boxed::Box};
 use serde::{Deserialize, Serialize};
 

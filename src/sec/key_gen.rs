@@ -1,3 +1,5 @@
+//! Отвечает за пароли.
+
 use passwords::{PasswordGenerator, hasher::{bcrypt, gen_salt}};
 
 /// Генерирует пароль, строго соответствующий заданным условиям.

@@ -1,10 +1,10 @@
-//! Модуль hyper_router отвечает за управление аутентификацией и вызов необходимых методов работы с базами данных.
+//! Отвечает за управление аутентификацией и вызов необходимых методов работы с базами данных.
 
+use hyper::{Body, Method};
+use hyper::http::{Request, Response};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use hyper::{Body, Method};
-use hyper::http::{Request, Response};
 
 mod resp;
 mod routes;
@@ -44,7 +44,7 @@ pub async fn router(
     (&Method::PATCH,  "/card")         => routes::patch_card        (ws).await,
     (&Method::DELETE, "/card")         => routes::delete_card       (ws).await,
     (&Method::PUT,    "/task")         => routes::create_task       (ws).await,
-//     (&Method::PATCH,  "/task")         => routes::patch_task        (ws).await,
+    (&Method::PATCH,  "/task")         => routes::patch_task        (ws).await,
 //     (&Method::DELETE, "/task")         => routes::delete_task       (ws).await,
 //     (&Method::PATCH,  "/task/tags")    => routes::patch_task_tags   (ws).await,
 //     (&Method::PATCH,  "/task/time")    => routes::patch_task_time   (ws).await,

@@ -1,5 +1,7 @@
-use hyper::http::Response;
+//! Отвечает за формирование Response для hyper.
+
 use hyper::Body;
+use hyper::http::Response;
 
 /// Формирует ответ из кода HTTP.
 pub fn from_code_and_msg(code: u16, msg: Option<String>) -> Response<Body> {

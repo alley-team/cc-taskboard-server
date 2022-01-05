@@ -1,7 +1,9 @@
-use std::sync::Arc;
+//! Отвечает за отдачу методов, в том числе результаты запроса, статус-коды и текст ошибок.
+
 use hyper::Body;
 use hyper::http::Response;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use crate::hyper_router::resp;
 use crate::model::{extract, Board, Card, Task, Workspace};
@@ -88,8 +90,6 @@ pub async fn sign_in(ws: Workspace) -> Response<Body> {
   }
 }
 
-/* Все следующие методы обязаны содержать в теле запроса JSON с TokenAuth. */
-
 /// Создаёт доску для пользователя.
 pub async fn create_board(ws: Workspace) -> Response<Body> {
   let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
@@ -136,7 +136,7 @@ pub async fn get_board(ws: Workspace) -> Response<Body> {
       Some(v) => v,
     },
   };
-  if let Err(_) = psql_handler::check_rights_on_board(Arc::clone(&ws.cli), &token_auth.id, &board_id).await {
+  if let Err(_) = psql_handler::in_shared_with(Arc::clone(&ws.cli), &token_auth.id, &board_id).await {
     return resp::from_code_and_msg(401, Some("Данная доска вам недоступна.".into()));
   };
   let board = match psql_handler::get_board(ws.cli, &board_id).await {
@@ -345,3 +345,5 @@ pub async fn create_task(ws: Workspace) -> Response<Body> {
     Ok(task_id) => resp::from_code_and_msg(200, Some(task_id.to_string())),
   }
 }
+
+/// Патчит задачу.

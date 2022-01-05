@@ -164,15 +164,6 @@ pub async fn create_board(cli: PgClient, author: &i64, board: &Board) -> MResult
   Ok(id)
 }
 
-/// Удостоверяется, что пользователь имеет право получать содержимое этой доски.
-pub async fn check_rights_on_board(cli: PgClient, user_id: &i64, board_id: &i64) -> MResult<()> {
-  let cli = cli.lock().await;
-  let shared_with = cli.query_one("select shared_with from boards where id = $1;", &[board_id]).await?;
-  let shared_with: Vec<i64> = serde_json::from_str(shared_with.get(0))?;
-  shared_with.iter().position(|id| *id == *user_id).ok_or(NoneFromOption {})?;
-  Ok(())
-}
-
 /// Отдаёт доску пользователю.
 pub async fn get_board(cli: PgClient, board_id: &i64) -> MResult<Board> {
   let cli = cli.lock().await;
