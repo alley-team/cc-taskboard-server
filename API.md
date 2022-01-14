@@ -263,7 +263,7 @@
     "author": 1234567890,
     "title": "<Заголовок карточки>",
     "executors": [],
-    "exec": true/false,
+    "exec": false,
     "subtasks": [{},{},{},],
     "notes": "<Заметки>",
     "tags": [{},{},{},],
@@ -294,7 +294,7 @@
       "text_color": "#xxxxxx",
       "background_color": "#xxxxxx",
     }
-  },..
+  },
 ]
 ```
 
@@ -329,7 +329,7 @@
   "task_id": 1234567890,
   "title": "<Заголовок карточки>",
   "executors": [],
-  "exec": true/false,
+  "exec": false,
   "notes": "<Заметки>",
   "text_color": "#xxxxxx",
   "background_color": "#xxxxxx"
