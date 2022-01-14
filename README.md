@@ -22,7 +22,7 @@ cargo build --release
 
 ```json
 {
-  "pg_config": "host=... user='...' password='...'",
+  "pg": "host=... user='...' password='...'",
   "admin_key": "...",
   "hyper_port": 8004
 }

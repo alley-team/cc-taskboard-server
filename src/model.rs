@@ -6,20 +6,17 @@ use hyper::body::to_bytes;
 use hyper::http::Request;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
+use crate::psql_handler::Db;
 use crate::sec::auth::UserCredentials;
 use crate::setup::AppConfig;
-
-type PgClient = Arc<Mutex<tokio_postgres::Client>>;
 
 /// Объединяет окружение в одну структуру данных.
 pub struct Workspace {
   /// Запрос, полученный от клиента. Содержит заголовки и тело.
   pub req: Request<Body>,
   /// Клиент PostgreSQL.
-  pub cli: PgClient,
+  pub db: Db,
   /// Конфигурация сервера.
   pub cnf: AppConfig,
 }
@@ -142,8 +139,8 @@ pub struct User {
   pub user_creds: UserCredentials,
 }
 
-/// Возможные ошибки при извлечении данных из тела HTTP-запроса.
-custom_error!{ ExtractionError
+// Возможные ошибки при извлечении данных из тела HTTP-запроса.
+custom_error!{ pub ExtractionError
   FromBody = "Не удалось получить данные из тела запроса.",
   FromBytes = "Не удалось создать строку из набора байт тела запроса.",
   FromBase64 = "Не удалось декодировать данные из base64.",

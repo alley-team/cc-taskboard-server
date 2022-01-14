@@ -1,12 +1,8 @@
 //! Отвечает за токены и оплату аккаунта.
 
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use chrono::{Utc, Duration};
 
-type PgClient = Arc<Mutex<tokio_postgres::Client>>;
-
-use crate::psql_handler::{get_tokens_and_billing, write_tokens};
+use crate::psql_handler::{Db, get_tokens_and_billing, write_tokens};
 use crate::sec::auth::TokenAuth;
 
 /// 1. Проверяет все токены пользователя на срок годности, проверяет наличие текущего токена и возвращает true, если пользователь определён.
@@ -14,8 +10,8 @@ use crate::sec::auth::TokenAuth;
 ///
 /// TODO сделать Redis-подключение и хранить данные по токенам вместо того, чтобы каждый раз валидировать их через базу данных.
 /// WARNING проверка оплаты идёт каждый 31 день, а не ровно в день оплаты
-pub async fn verify_user(cli: PgClient, token_auth: &TokenAuth) -> (bool, bool) {
-  let (mut tokens, billing) = get_tokens_and_billing(Arc::clone(&cli), &token_auth.id).await.unwrap();
+pub async fn verify_user(db: &Db, token_auth: &TokenAuth) -> (bool, bool) {
+  let (mut tokens, billing) = get_tokens_and_billing(db, &token_auth.id).await.unwrap();
   // 1. Проверка токенов
   let mut s: usize = 0;
   let mut i: usize = 0;
@@ -51,7 +47,7 @@ pub async fn verify_user(cli: PgClient, token_auth: &TokenAuth) -> (bool, bool) 
   }
   // X. Возврат результатов
   if (s > 0) || validated {
-    match write_tokens(Arc::clone(&cli), &token_auth.id, &tokens).await {
+    match write_tokens(db, &token_auth.id, &tokens).await {
       Err(_) => (false, billed),
       Ok(_) => (validated, billed),
     }
