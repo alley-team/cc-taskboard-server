@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::psql_handler::Db;
 use crate::sec::auth::UserCredentials;
-use crate::setup::AppConfig;
 
 /// Объединяет окружение в одну структуру данных.
 pub struct Workspace {
@@ -15,8 +14,6 @@ pub struct Workspace {
   pub req: Request<Body>,
   /// Клиент PostgreSQL.
   pub db: Db,
-  /// Конфигурация сервера.
-  pub cnf: AppConfig,
 }
 
 /// Набор цветов для раскраски компонента.

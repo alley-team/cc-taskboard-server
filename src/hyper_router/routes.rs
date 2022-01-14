@@ -36,12 +36,12 @@ use crate::sec::auth::{extract_creds, AdminCredentials, TokenAuth, SignInCredent
 use crate::sec::tokens_vld;
 
 /// Отвечает за авторизацию администратора и первоначальную настройку базы данных.
-pub async fn db_setup(ws: Workspace) -> Response<Body> {
-  let admin_key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
+pub async fn db_setup(ws: Workspace, admin_key: String) -> Response<Body> {
+  let key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
     Ok(v) => v.key,
     _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
   };
-  let status_code = match admin_key == ws.cnf.admin_key {
+  let status_code = match key == admin_key {
     true => match psql_handler::db_setup(&ws.db).await {
       Ok(_) => 200,
       _ => 500,
@@ -52,12 +52,12 @@ pub async fn db_setup(ws: Workspace) -> Response<Body> {
 }
 
 /// Генерирует новый ключ регистрации по запросу администратора.
-pub async fn get_new_cc_key(ws: Workspace) -> Response<Body> {
-  let admin_key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
+pub async fn get_new_cc_key(ws: Workspace, admin_key: String) -> Response<Body> {
+  let key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
     Ok(v) => v.key,
     _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
   };
-  if admin_key != ws.cnf.admin_key {
+  if key != admin_key {
     return resp::from_code_and_msg(401, None);
   }
   match psql_handler::register_new_cc_key(&ws.db).await {
@@ -114,45 +114,42 @@ pub async fn sign_in(ws: Workspace) -> Response<Body> {
   }
 }
 
-/// Создаёт доску для пользователя.
-pub async fn create_board(ws: Workspace) -> Response<Body> {
+/// Аутенцифицирует пользователя по токену, возвращая его идентификатор и данные по оплате аккаунта.
+pub async fn auth_by_token(ws: &Workspace) -> Result<(i64, bool), (u16, String)> {
   let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
     Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
+    _ => return Err((401, "Не получен валидный токен.".into())),
   };
   let (valid, billed) = tokens_vld::verify_user(&ws.db, &token_auth).await;
   if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
+    return Err((401, "Неверный токен. Пройдите аутентификацию заново.".into()));
   };
-  let board = match extract::<Board>(ws.req).await {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
-  };
+  Ok((token_auth.id, billed))
+}
+
+/// Создаёт доску для пользователя.
+pub async fn create_board(ws: Workspace, user_id: i64, billed: bool) -> Response<Body> {
   if !billed {
-    let boards_n = match psql_handler::count_boards(&ws.db, &token_auth.id).await {
+    let boards_n = match psql_handler::count_boards(&ws.db, &user_id).await {
       Ok(v) => v,
       _ => return resp::from_code_and_msg(500, Some("Невозможно сосчитать число имеющихся досок у пользователя.")),
     };
     if boards_n > 0 {
       return resp::from_code_and_msg(402, Some("Вы не можете использовать больше одной доски на бесплатном аккаунте."));
     };
-  }
-  match psql_handler::create_board(&ws.db, &token_auth.id, &board).await {
+  };
+  let board = match extract::<Board>(ws.req).await {
+    Ok(v) => v,
+    _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
+  };
+  match psql_handler::create_board(&ws.db, &user_id, &board).await {
     Ok(id) => resp::from_code_and_msg(200, Some(&id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось создать доску.")),
   }
 }
 
 /// Передаёт доску пользователю.
-pub async fn get_board(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn get_board(ws: Workspace, user_id: i64) -> Response<Body> {
   let board_id = match extract::<JsonValue>(ws.req).await {
     Ok(v) => match v["board_id"].as_i64() {
       Some(v) => v,
@@ -160,16 +157,12 @@ pub async fn get_board(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
   };
-  if let Err(_) = psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await {
+  if let Err(_) = psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await {
     return resp::from_code_and_msg(401, Some("Данная доска вам недоступна."));
   };
-  let board = match psql_handler::get_board(&ws.db, &board_id).await {
-    Ok(board) => board,
-    _ => return resp::from_code_and_msg(500, None),
-  };
-  match serde_json::to_string(&board) {
-    Ok(body) => resp::from_code_and_msg(200, Some(&body)),
-    _ => resp::from_code_and_msg(500, None),
+  match psql_handler::get_board(&ws.db, &board_id).await {
+    Ok(board) => resp::from_code_and_msg(200, Some(&board)),
+     _ => resp::from_code_and_msg(500, None),
   }
 }
 
@@ -178,15 +171,7 @@ pub async fn get_board(ws: Workspace) -> Response<Body> {
 /// Для доски это - title и background_color. Дочерними карточками управляют методы карточек.
 ///
 /// Запрос представляет из себя JSON с id доски. Изменения принимаются только тогда, когда автором доски является данный пользователь.
-pub async fn patch_board(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn patch_board(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -194,22 +179,14 @@ pub async fn patch_board(ws: Workspace) -> Response<Body> {
   if patch.get("board_id") == None {
     return resp::from_code_and_msg(400, Some("Не получен board_id."));
   };
-  match psql_handler::apply_patch_on_board(&ws.db, &token_auth.id, &patch).await {
+  match psql_handler::apply_patch_on_board(&ws.db, &user_id, &patch).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.")),
   }
 }
 
 /// Удаляет доску.
-pub async fn delete_board(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn delete_board(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -221,22 +198,14 @@ pub async fn delete_board(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  match psql_handler::remove_board(&ws.db, &token_auth.id, &board_id).await {
+  match psql_handler::remove_board(&ws.db, &user_id, &board_id).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось удалить доску.")),
   }
 }
 
 /// Создаёт карточку в заданной доске.
-pub async fn create_card(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn create_card(ws: Workspace, user_id: i64) -> Response<Body> {
   let body = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -248,7 +217,7 @@ pub async fn create_card(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Пользователь не имеет доступа к доске."));
   };
   let card: Card = match body.get("card") {
@@ -258,7 +227,7 @@ pub async fn create_card(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получена карточка.")),
   };
-  match psql_handler::insert_card(&ws.db, &token_auth.id, &board_id, card).await {
+  match psql_handler::insert_card(&ws.db, &user_id, &board_id, card).await {
     Ok(card_id) => resp::from_code_and_msg(200, Some(&card_id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось добавить карточку.")),
   }
@@ -267,15 +236,7 @@ pub async fn create_card(ws: Workspace) -> Response<Body> {
 /// Патчит карточку, изменяя определённые свойства в ней.
 ///
 /// Для карточки это - title, background_color и text_color.
-pub async fn patch_card(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn patch_card(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -287,28 +248,20 @@ pub async fn patch_card(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   if patch.get("card_id") == None {
     return resp::from_code_and_msg(400, Some("Не получен card_id."));
   };
-  match psql_handler::apply_patch_on_card(&ws.db, &token_auth.id, &patch).await {
+  match psql_handler::apply_patch_on_card(&ws.db, &user_id, &patch).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.")),
   }
 }
 
 /// Удаляет карточку.
-pub async fn delete_card(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn delete_card(ws: Workspace, user_id: i64) -> Response<Body> {
   let body = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -320,7 +273,7 @@ pub async fn delete_card(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -330,22 +283,14 @@ pub async fn delete_card(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
   };
-  match psql_handler::remove_card(&ws.db, &token_auth.id, &board_id, &card_id).await {
+  match psql_handler::remove_card(&ws.db, &user_id, &board_id, &card_id).await {
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить карточку.")),
     _ => resp::from_code_and_msg(200, None),
   }
 }
 
 /// Создаёт задачу.
-pub async fn create_task(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn create_task(ws: Workspace, user_id: i64) -> Response<Body> {
   let body = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -357,7 +302,7 @@ pub async fn create_task(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -374,7 +319,7 @@ pub async fn create_task(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получена задача.")),
   };
-  match psql_handler::insert_task(&ws.db, &token_auth.id, &board_id, &card_id, task).await {
+  match psql_handler::insert_task(&ws.db, &user_id, &board_id, &card_id, task).await {
     Ok(task_id) => resp::from_code_and_msg(200, Some(&task_id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось добавить задачу.")),
   }
@@ -389,15 +334,7 @@ pub async fn create_task(ws: Workspace) -> Response<Body> {
 /// 4. Заметки к задаче.
 /// 5. Цвет текста.
 /// 6. Цвет фона.
-pub async fn patch_task(ws: Workspace) -> Response<Body> {
-  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
-  if !valid {
-    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
-  };
+pub async fn patch_task(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
@@ -409,7 +346,7 @@ pub async fn patch_task(ws: Workspace) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   if patch.get("card_id") == None {
@@ -418,58 +355,89 @@ pub async fn patch_task(ws: Workspace) -> Response<Body> {
   if patch.get("task_id") == None {
     return resp::from_code_and_msg(400, Some("Не получен task_id."));
   };
-  match psql_handler::apply_patch_on_task(&ws.db, &token_auth.id, &patch).await {
+  match psql_handler::apply_patch_on_task(&ws.db, &user_id, &patch).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к задаче.")),
   }
 }
 
 /// Удаляет задачу.
-pub async fn delete_task(ws: Workspace) -> Response<Body> {
-  unimplemented!();
+pub async fn delete_task(ws: Workspace, user_id: i64) -> Response<Body> {
+  let body = match extract::<JsonValue>(ws.req).await {
+    Ok(v) => v,
+    _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
+  };
+  let board_id = match body.get("board_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
+  };
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
+  };
+  let card_id = match body.get("card_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("card_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
+  };
+  let task_id = match body.get("task_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("task_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
+  };
+  match psql_handler::remove_task(&ws.db, &user_id, &board_id, &card_id, &task_id).await {
+    Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить задачу.")),
+    _ => resp::from_code_and_msg(200, None),
+  }
 }
 
 /// Изменяет теги задачи.
-pub async fn patch_task_tags(ws: Workspace) -> Response<Body> {
+pub async fn patch_task_tags(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Изменяет временные рамки задачи.
-pub async fn patch_task_time(ws: Workspace) -> Response<Body> {
+pub async fn patch_task_time(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Создаёт подзадачу.
-pub async fn create_subtask(ws: Workspace) -> Response<Body> {
+pub async fn create_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Изменяет подзадачу.
-pub async fn patch_subtask(ws: Workspace) -> Response<Body> {
+pub async fn patch_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Удаляет подзадачу.
-pub async fn delete_subtask(ws: Workspace) -> Response<Body> {
+pub async fn delete_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Изменяет теги подзадачи.
-pub async fn patch_subtask_tags(ws: Workspace) -> Response<Body> {
+pub async fn patch_subtask_tags(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Изменяет временные рамки подзадачи.
-pub async fn patch_subtask_time(ws: Workspace) -> Response<Body> {
+pub async fn patch_subtask_time(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Изменяет данные аутентификации пользователя.
-pub async fn patch_user_creds(ws: Workspace) -> Response<Body> {
+pub async fn patch_user_creds(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }
 
 /// Изменяет способы оплаты аккаунта пользователя.
-pub async fn patch_user_billing(ws: Workspace) -> Response<Body> {
+pub async fn patch_user_billing(ws: Workspace, user_id: i64) -> Response<Body> {
   unimplemented!();
 }

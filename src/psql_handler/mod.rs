@@ -5,11 +5,10 @@ use core::marker::{Send, Sync};
 use custom_error::custom_error;
 use futures::future;
 use serde_json::Value as JsonValue;
-use std::boxed::Box;
-use std::collections::HashSet;
+use std::{boxed::Box, collections::HashSet};
 use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 
-use crate::model::{Board, Card, Task, Timelines, Tag};
+use crate::model::{Board, Card, Task/*, Timelines, Tag*/};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -190,21 +189,14 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
 }
 
 /// Отдаёт доску пользователю.
-pub async fn get_board(db: &Db, board_id: &i64) -> MResult<Board> {
+pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
   let board_data = db.read("select author, shared_with, title, cards, background_color from boards where id = $1;", &[board_id]).await?;
   let author: i64 = board_data.get(0);
-  let shared_with: Vec<i64> = serde_json::from_str(board_data.get(1))?;
+  let shared_with: String = board_data.get(1);
   let title: String = board_data.get(2);
-  let cards: Vec<Card> = serde_json::from_str(board_data.get(3))?;
+  let cards: String = board_data.get(3);
   let background_color: String = board_data.get(4);
-  Ok(Board {
-    id: *board_id,
-    author,
-    shared_with,
-    title,
-    cards,
-    background_color,
-  })
+  Ok(format!(r#"{{"id": {}, "author": {}, "shared_with": {}, "title": {}, "cards": {}, "background_color": {}}}"#, *board_id, author, shared_with, title, cards, background_color))
 }
 
 /// Применяет патч на доску.
@@ -426,20 +418,24 @@ pub async fn apply_patch_on_card(db: &Db, user_id: &i64, patch: &JsonValue) -> M
 pub async fn remove_card(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64) -> MResult<()> {
   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  let card_index: usize = cards.iter().position(|c| (c.id == *card_id)).ok_or(NFO{})?;
+  let card_index: usize = cards.iter().position(|c| c.id == *card_id).ok_or(NFO{})?;
   cards.remove(card_index);
   let cards = serde_json::to_string(&cards)?;
-  db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
+  let tasks_id_seq = board_id.to_string() + "_" + &card_id.to_string() + "%";
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("delete from id_seqs where id like $1;", vec![&tasks_id_seq]),
+    ("update boards set cards = $1 where id = $2;", vec![&cards, &board_id]),
+  ];
+  db.write_mul(queries).await
 }
 
 /// Создаёт задачу.
-pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, mut task: Task) -> MResult<i64> {
+pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, mut task: Task) 
+  -> MResult<i64> 
+{
   let tasks_id_seq = board_id.to_string() + "_" + &card_id.to_string();
   let data = db.read("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
-  let mut cards: Vec<Card> = match serde_json::from_str(data.get(0)) {
-    Ok(v) => v,
-    _ => Vec::new(),
-  };
+  let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
   let shared_with: Vec<i64> = serde_json::from_str(data.get(1))?;
   let shared_with: HashSet<i64> = shared_with.into_iter().collect();
   let mut next_task_id: i64 = match db.read("select val from id_seqs where id = $1;", &[&tasks_id_seq]).await {
@@ -489,10 +485,7 @@ pub async fn apply_patch_on_task(db: &Db, user_id: &i64, patch: &JsonValue) -> M
   let card_id = patch.get("card_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
   let task_id = patch.get("task_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
   let data = db.read("select cards, shared_with from boards where id = $1;", &[&board_id]).await?;
-  let mut cards: Vec<Card> = match serde_json::from_str(data.get(0)) {
-    Ok(v) => v,
-    _ => Vec::new(),
-  };
+  let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
   let card_index: usize = cards.iter().position(|c| c.id == card_id).ok_or(NFO{})?;
   let task_index: usize = cards[card_index].tasks.iter().position(|t| t.id == task_id).ok_or(NFO{})?;
   if let Some(title) = patch.get("title") {
@@ -525,4 +518,27 @@ pub async fn apply_patch_on_task(db: &Db, user_id: &i64, patch: &JsonValue) -> M
   };
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
+}
+
+/// Удаляет задачу.
+pub async fn remove_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, task_id: &i64)
+  -> MResult<()>
+{
+  let cards = db.read("select cards from boards where id = $1;", &[&board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  let card_index: usize = cards.iter().position(|c| c.id == *card_id).ok_or(NFO{})?;
+  let task_index: usize = cards[card_index].tasks.iter().position(|t| t.id == *task_id).ok_or(NFO{})?;
+  cards[card_index].tasks.remove(task_index);
+  let cards = serde_json::to_string(&cards)?;
+  let subtasks_id_seq = board_id.to_string() +
+                        "_" +
+                        &card_id.to_string() +
+                        "_" +
+                        &task_id.to_string() +
+                        "%";
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("delete from id_seqs where id like $1;", vec![&subtasks_id_seq]),
+    ("update boards set cards = $1 where id = $2;", vec![&cards, &board_id]),
+  ];
+  db.write_mul(queries).await
 }
