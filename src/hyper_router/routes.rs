@@ -1,4 +1,29 @@
 //! Отвечает за отдачу методов, в том числе результаты запроса, статус-коды и текст ошибок.
+//!
+//! Все методы, которые работают с токенами, должны соответствовать двум требованиям:
+//!
+//! 1. Должен проверяться токен на валидность:
+//!
+//! ```rust
+//! let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+//!   Ok(v) => v,
+//!   _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
+//! };
+//! let (valid, billed) = tokens_vld::verify_user(&ws.db, &token_auth).await;
+//! if !valid {
+//!   return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
+//! };
+//! ```
+//!
+//! 2. Должны проверяться права человека на доску путём просмотра списка shared_with:
+//!
+//! ```rust
+//! if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+//!   return resp::from_code_and_msg(500, Some("Пользователь не имеет доступа к доске."));
+//! };
+//! ```
+//!
+//! Следствие второго правила: те, кто имеют доступ к доске, могут редактировать всё её содержимое, кроме параметров самой доски.
 
 use hyper::Body;
 use hyper::http::Response;
@@ -255,8 +280,15 @@ pub async fn patch_card(ws: Workspace) -> Response<Body> {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
   };
-  if patch.get("board_id") == None {
-    return resp::from_code_and_msg(400, Some("Не получен board_id."));
+  let board_id = match patch.get("board_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
+  };
+  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   if patch.get("card_id") == None {
     return resp::from_code_and_msg(400, Some("Не получен card_id."));
@@ -287,6 +319,9 @@ pub async fn delete_card(ws: Workspace) -> Response<Body> {
       _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
+  };
+  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
     Some(v) => match v.as_i64() {
@@ -346,8 +381,47 @@ pub async fn create_task(ws: Workspace) -> Response<Body> {
 }
 
 /// Патчит задачу.
+///
+/// В задаче можно поменять:
+/// 1. Название задачи.
+/// 2. Назначенные исполнители задачи.
+/// 3. Статус выполнения задачи (выполнена/не выполнена).
+/// 4. Заметки к задаче.
+/// 5. Цвет текста.
+/// 6. Цвет фона.
 pub async fn patch_task(ws: Workspace) -> Response<Body> {
-  unimplemented!();
+  let token_auth = match extract_creds::<TokenAuth>(ws.req.headers().get("App-Token")) {
+    Ok(v) => v,
+    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
+  };
+  let (valid, _) = tokens_vld::verify_user(&ws.db, &token_auth).await;
+  if !valid {
+    return resp::from_code_and_msg(401, Some("Неверный токен. Пройдите аутентификацию заново."));
+  };
+  let patch = match extract::<JsonValue>(ws.req).await {
+    Ok(v) => v,
+    _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
+  };
+  let board_id = match patch.get("board_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
+  };
+  if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
+  };
+  if patch.get("card_id") == None {
+    return resp::from_code_and_msg(400, Some("Не получен card_id."));
+  };
+  if patch.get("task_id") == None {
+    return resp::from_code_and_msg(400, Some("Не получен task_id."));
+  };
+  match psql_handler::apply_patch_on_task(&ws.db, &token_auth.id, &patch).await {
+    Ok(_) => resp::from_code_and_msg(200, None),
+    _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к задаче.")),
+  }
 }
 
 /// Удаляет задачу.

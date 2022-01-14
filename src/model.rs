@@ -1,11 +1,9 @@
 //! Модель данных приложения.
 
+use chrono::{DateTime, Utc, serde::ts_seconds};
 use custom_error::custom_error;
-use hyper::Body;
-use hyper::body::to_bytes;
-use hyper::http::Request;
-use serde::{Deserialize, Serialize};
-use serde::de::DeserializeOwned;
+use hyper::{Body, body::to_bytes, http::Request};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::psql_handler::Db;
 use crate::sec::auth::UserCredentials;
@@ -34,9 +32,11 @@ pub struct ColorSet {
 #[derive(Deserialize, Serialize)]
 pub struct Timelines {
   /// Предпочтительно закончить до X (даты и времени).
-  pub preferred_time: String,
+  #[serde(with = "ts_seconds")]
+  pub preferred_time: DateTime<Utc>,
   /// Обязательно закончить до Y (даты и времени).
-  pub max_time: String,
+  #[serde(with = "ts_seconds")]
+  pub max_time: DateTime<Utc>,
   /// Ожидаемое время выполнения задачи Z в минутах.
   pub expected_time: u32,
 }

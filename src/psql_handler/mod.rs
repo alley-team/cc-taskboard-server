@@ -9,7 +9,7 @@ use std::boxed::Box;
 use std::collections::HashSet;
 use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 
-use crate::model::{Board, Card, Task};
+use crate::model::{Board, Card, Task, Timelines, Tag};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -295,11 +295,11 @@ pub async fn remove_board(db: &Db, user_id: &i64, board_id: &i64) -> MResult<()>
     let r: Vec<&(dyn ToSql + Sync)> = vec![&results[i].0, &results[i].1];
     shared_boards_queries.push(("update users set shared_boards = $1 where id = $2;", r));
   };
-  db.write_mul(shared_boards_queries).await?;
-  let shared_boards_queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
-    ("delete from boards where id = $1;", vec![board_id]),
-    ("delete from id_seqs where id like concat(cast($1 as varchar), '%');", vec![board_id])
-  ];
+  shared_boards_queries.push(("delete from boards where id = $1;", vec![board_id]));
+  shared_boards_queries.push((
+    "delete from id_seqs where id like concat(cast($1 as varchar), '%');",
+    vec![board_id]
+  ));
   db.write_mul(shared_boards_queries).await
 }
 
@@ -404,54 +404,19 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
 
 /// Применяет патч на карточку.
 pub async fn apply_patch_on_card(db: &Db, user_id: &i64, patch: &JsonValue) -> MResult<()> {
-  custom_error!{NTA{} = "Пользователь не может редактировать эту карточку."};
-  let mut title_changed: bool = false;
-  if patch.get("title") != None {
-    title_changed = true;
+  let board_id = patch.get("board_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
+  let card_id = patch.get("card_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
+  let cards = db.read("select cards from boards where id = $1;", &[&board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  let card_index: usize = cards.iter().position(|c| c.id == card_id).ok_or(NFO{})?;
+  if let Some(title) = patch.get("title") {
+    cards[card_index].title = String::from(title.as_str().ok_or(NFO{})?);
   };
-  let mut background_color_changed: bool = false;
-  if patch.get("background_color") != None {
-    background_color_changed = true;
+  if let Some(background_color) = patch.get("background_color") {
+    cards[card_index].color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
   };
-  let mut text_color_changed: bool = false;
-  if patch.get("text_color") != None {
-    text_color_changed = true;
-  };
-  if !(title_changed || background_color_changed || text_color_changed) {
-    return Ok(());
-  };
-  let board_id = patch.get("board_id")
-                      .ok_or(NFO{})?
-                      .as_i64()
-                      .ok_or(NFO{})?;
-  let card_id = patch.get("card_id")
-                     .ok_or(NFO{})?
-                     .as_i64()
-                     .ok_or(NFO{})?;
-  let res = db.read("select author, cards from boards where id = $1;", &[&board_id]).await?;
-  let author_id: i64 = res.get(0);
-  if *user_id != author_id { return Err(Box::new(NTA{})); };
-  let mut cards: Vec<Card> = serde_json::from_str(res.get(1))?;
-  let card_index: usize = cards.iter()
-                               .position(|c| (c.author == *user_id) && (c.id == card_id))
-                               .ok_or(NFO{})?;
-  if title_changed {
-    cards[card_index].title = String::from(patch.get("title")
-                                                .ok_or(NFO{})?
-                                                .as_str()
-                                                .ok_or(NFO{})?);
-  };
-  if background_color_changed {
-    cards[card_index].color_set.background_color = String::from(patch.get("background_color")
-                                                                     .ok_or(NFO{})?
-                                                                     .as_str()
-                                                                     .ok_or(NFO{})?);
-  };
-  if text_color_changed {
-    cards[card_index].color_set.text_color = String::from(patch.get("text_color")
-                                                               .ok_or(NFO{})?
-                                                               .as_str()
-                                                               .ok_or(NFO{})?);
+  if let Some(text_color) = patch.get("text_color") {
+    cards[card_index].color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
   };
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
@@ -459,11 +424,9 @@ pub async fn apply_patch_on_card(db: &Db, user_id: &i64, patch: &JsonValue) -> M
 
 /// Удаляет карточку.
 pub async fn remove_card(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64) -> MResult<()> {
-  custom_error!{NTA{} = "Пользователь не может удалить эту карточку."};
   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
   let card_index: usize = cards.iter().position(|c| (c.id == *card_id)).ok_or(NFO{})?;
-  if cards[card_index].author != *user_id { return Err(Box::new(NTA{})); };
   cards.remove(card_index);
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
@@ -508,9 +471,7 @@ pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, 
     };
     task.subtasks[i].executors = executors;
   };
-  let card_index: usize = cards.iter()
-                               .position(|c| c.id == *card_id)
-                               .ok_or(NFO{})?;
+  let card_index: usize = cards.iter().position(|c| c.id == *card_id).ok_or(NFO{})?;
   cards[card_index].tasks.push(task);
   let cards = serde_json::to_string(&cards)?;
   let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
@@ -520,4 +481,48 @@ pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, 
   ];
   db.write_mul(queries).await?;
   Ok(task_id)
+}
+
+/// Применяет патч на задачу.
+pub async fn apply_patch_on_task(db: &Db, user_id: &i64, patch: &JsonValue) -> MResult<()> {
+  let board_id = patch.get("board_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
+  let card_id = patch.get("card_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
+  let task_id = patch.get("task_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
+  let data = db.read("select cards, shared_with from boards where id = $1;", &[&board_id]).await?;
+  let mut cards: Vec<Card> = match serde_json::from_str(data.get(0)) {
+    Ok(v) => v,
+    _ => Vec::new(),
+  };
+  let card_index: usize = cards.iter().position(|c| c.id == card_id).ok_or(NFO{})?;
+  let task_index: usize = cards[card_index].tasks.iter().position(|t| t.id == task_id).ok_or(NFO{})?;
+  if let Some(title) = patch.get("title") {
+    cards[card_index].tasks[task_index].title = String::from(title.as_str().ok_or(NFO{})?);
+  };
+  if let Some(executors) = patch.get("executors") {
+    let shared_with: Vec<i64> = serde_json::from_str(data.get(1))?;
+    let shared_with: HashSet<i64> = shared_with.into_iter().collect();
+    let executors: Vec<i64> = serde_json::from_value(executors.clone())?;
+    cards[card_index].tasks[task_index].executors = Vec::new();
+    executors.iter()
+             .filter(|e| shared_with.contains(e))
+             .for_each(|i| cards[card_index].tasks[task_index].executors.push(*i));
+  };
+  if let Some(exec) = patch.get("exec") {
+    cards[card_index].tasks[task_index].exec = exec.as_bool().ok_or(NFO{})?;
+  };
+  if let Some(notes) = patch.get("notes") {
+    cards[card_index].tasks[task_index].notes = String::from(notes.as_str().ok_or(NFO{})?);
+  };
+  if let Some(background_color) = patch.get("background_color") {
+    cards[card_index].tasks[task_index]
+                     .color_set
+                     .background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+  };
+  if let Some(text_color) = patch.get("text_color") {
+    cards[card_index].tasks[task_index]
+                     .color_set
+                     .text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+  };
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
 }

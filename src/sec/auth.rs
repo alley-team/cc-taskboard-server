@@ -1,8 +1,7 @@
 //! Предоставляет структуры данных для управления аутентификацией.
 
-use serde::{Deserialize, Serialize};
-use serde::de::DeserializeOwned;
 use chrono::{DateTime, Utc, serde::ts_seconds};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Сведения аутентификации администратора.
 #[derive(Deserialize, Serialize)]
