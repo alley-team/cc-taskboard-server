@@ -24,18 +24,19 @@ pub struct Db {
 }
 
 impl Db {
+  /// Создаёт объект из пула соединений.
   pub fn new(pool: Pool<PgConManager<NoTls>>) -> Db {
     Db { pool }
   }
 
-  /// Чтение одной строки из базы данных.
+  /// Считывает одну строку из базы данных.
   pub async fn read<T>(&self, statement: &T, params: &[&(dyn ToSql + Sync)]) -> MResult<Row>
   where T: ?Sized + ToStatement {
     let cli = self.pool.get().await?;
     Ok(cli.query_one(statement, params).await?)
   }
   
-  /// Запись одного выражения в базу данных.
+  /// Записывает одно выражение в базу данных.
   pub async fn write<T>(&self, statement: &T, params: &[&(dyn ToSql + Sync)]) -> MResult<()>
   where T: ?Sized + ToStatement {
     let mut cli = self.pool.get().await?;
@@ -45,7 +46,7 @@ impl Db {
     Ok(())
   }
   
-  /// Чтение нескольких значений из базы данных.
+  /// Считывает несколько значений по одной строке из базы данных.
   pub async fn read_mul<T>(&self, parts: Vec<(&T, Vec<&(dyn ToSql + Sync)>)>) -> MResult<Vec<Row>>
   where T: ?Sized + ToStatement + Send + Sync {
     let cli = self.pool.get().await?;
@@ -57,7 +58,7 @@ impl Db {
     Ok(results)
   }
   
-  /// Запись нескольких значений в базу данных.
+  /// Записывает несколько значений в базу данных.
   pub async fn write_mul<T>(&self, parts: Vec<(&T, Vec<&(dyn ToSql + Sync)>)>) -> MResult<()>
   where T: ?Sized + ToStatement + Send + Sync {
     let mut cli = self.pool.get().await?;
@@ -133,7 +134,7 @@ pub async fn sign_in_creds_to_id(db: &Db, sign_in_credentials: &SignInCredential
     &sign_in_credentials.pass
   ) {
     true => Ok(id_and_credentials.get(0)),
-    false => Err(Box::new(IncorrectPassword {})),
+    _ => Err(Box::new(IncorrectPassword {})),
   }
 }
 
@@ -337,8 +338,8 @@ pub async fn in_shared_with(db: &Db, user_id: &i64, board_id: &i64) -> MResult<(
 pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card) -> MResult<i64> {
   let cards_id_seq = board_id.to_string();
   let mut next_card_id: i64 = match db.read("select val from id_seqs where id = $1;", &[&cards_id_seq]).await {
-    Err(_) => 1,
     Ok(res) => res.get(0),
+    _ => 1,
   };
   let card_id = next_card_id;
   card.id = next_card_id;
@@ -392,8 +393,8 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
   db.write_mul(id_seqs_queries).await?;
   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = match serde_json::from_str(cards.get(0)) {
-    Err(_) => Vec::new(),
     Ok(v) => v,
+    _ => Vec::new(),
   };
   cards.push(card);
   let cards = serde_json::to_string(&cards)?;

@@ -18,7 +18,6 @@ use psql_handler::Db;
 pub async fn main() {
   let cfg = setup::get_config();
   let port = cfg.hyper_port;
-  
   let manager = bb8_postgres::PostgresConnectionManager::new_from_stringlike(
                     cfg.pg.clone(),
                     tokio_postgres::NoTls)
@@ -28,9 +27,7 @@ pub async fn main() {
     .build(manager)
     .await
     .unwrap();
-  
   let db = Db::new(pool);
-  
   let service = hyper::service::make_service_fn(move |conn: &hyper::server::conn::AddrStream| {
     let local_cfg = cfg.clone();
     let db = db.clone();
@@ -43,11 +40,9 @@ pub async fn main() {
     });
     async move { Ok::<_, std::convert::Infallible>(service) }
   });
-  
   let addr = ([127, 0, 0, 1], port).into();
   let server = hyper::Server::bind(&addr).serve(service);
   println!("Сервер слушает по адресу http://{}", addr);
-  
   let finisher = server.with_graceful_shutdown(hyper_router::shutdown());
   match finisher.await {
     Err(e) => eprintln!("Ошибка сервера: {}", e),
