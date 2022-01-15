@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::psql_handler::Db;
 use crate::sec::auth::UserCredentials;
 
+custom_error!{ pub GetMutCardError{} = "Не удалось получить карточку." }
+custom_error!{ pub GetMutTaskError{} = "Не удалось получить задачу." }
+custom_error!{ pub GetMutSubtaskError{} = "Не удалось получить подзадачу." }
+custom_error!{ pub CardRemoveError{} = "Не удалось удалить карточку." }
+custom_error!{ pub TaskRemoveError{} = "Не удалось удалить задачу." }
+custom_error!{ pub SubtaskRemoveError{} = "Не удалось удалить подзадачу." }
+
 /// Объединяет окружение в одну структуру данных.
 pub struct Workspace {
   /// Запрос, полученный от клиента. Содержит заголовки и тело.
@@ -17,7 +24,7 @@ pub struct Workspace {
 }
 
 /// Набор цветов для раскраски компонента.
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct ColorSet {
   /// Цвет текста.
   pub text_color: String,
@@ -26,7 +33,7 @@ pub struct ColorSet {
 }
 
 /// Временные рамки для задач и подзадач.
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Timelines {
   /// Предпочтительно закончить до X (даты и времени).
   #[serde(with = "ts_seconds")]
@@ -38,12 +45,12 @@ pub struct Timelines {
   pub expected_time: u32,
 }
 
-/// Тег.
-#[derive(Deserialize, Serialize)]
+/// Метка.
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Tag {
-  /// Текст тега.
+  /// Название метки.
   pub title: String,
-  /// Раскраска тега.
+  /// Раскраска метки.
   pub color_set: ColorSet,
 }
 
@@ -93,6 +100,27 @@ pub struct Task {
   pub color_set: ColorSet,
 }
 
+impl Task {
+  /// Возвращает мутабельную ссылку на подзадачу.
+  pub fn get_mut_subtask(&mut self, subtask_id: &i64) -> Result<&mut Subtask, GetMutSubtaskError> {
+    let subtask_index: Option<usize> = self.subtasks.iter().position(|st| st.id == *subtask_id);
+    if subtask_index.is_none() { return Err(GetMutSubtaskError{}); }
+    let subtask_index: usize = subtask_index.unwrap();
+    match self.subtasks.get_mut(subtask_index) {
+      Some(subtask) => Ok(subtask),
+      _ => Err(GetMutSubtaskError{}),
+    }
+  }
+  
+  /// Удаляет и возвращает подзадачу.
+  pub fn remove_subtask(&mut self, subtask_id: &i64) -> Result<Subtask, SubtaskRemoveError> {
+    let subtask_index: Option<usize> = self.subtasks.iter().position(|st| st.id == *subtask_id);
+    if subtask_index.is_none() { return Err(SubtaskRemoveError{}); }
+    let subtask_index: usize = subtask_index.unwrap();
+    Ok(self.subtasks.remove(subtask_index))
+  }
+}
+
 /// Карточка.
 #[derive(Deserialize, Serialize)]
 pub struct Card {
@@ -106,6 +134,47 @@ pub struct Card {
   pub tasks: Vec<Task>,
   /// Раскраска карточки.
   pub color_set: ColorSet,
+}
+
+impl Card {
+  /// Возвращает мутабельную ссылку на задачу.
+  pub fn get_mut_task(&mut self, task_id: &i64) -> Result<&mut Task, GetMutTaskError> {
+    let task_index: Option<usize> = self.tasks.iter().position(|t| t.id == *task_id);
+    if task_index.is_none() { return Err(GetMutTaskError{}); }
+    let task_index: usize = task_index.unwrap();
+    match self.tasks.get_mut(task_index) {
+      Some(task) => Ok(task),
+      _ => Err(GetMutTaskError{}),
+    }
+  }
+  
+  /// Возвращает мутабельную ссылку на подзадачу одной из задач.
+  pub fn get_mut_subtask(&mut self, task_id: &i64, subtask_id: &i64) 
+    -> Result<&mut Subtask, GetMutSubtaskError>
+  {
+    let task_index: Option<usize> = self.tasks.iter().position(|t| t.id == *task_id);
+    if task_index.is_none() { return Err(GetMutSubtaskError{}); }
+    let task_index: usize = task_index.unwrap();
+    self.tasks[task_index].get_mut_subtask(subtask_id)
+  }
+  
+  /// Удаляет и возвращает задачу.
+  pub fn remove_task(&mut self, task_id: &i64) -> Result<Task, TaskRemoveError> {
+    let task_index: Option<usize> = self.tasks.iter().position(|t| t.id == *task_id);
+    if task_index.is_none() { return Err(TaskRemoveError{}); }
+    let task_index: usize = task_index.unwrap();
+    Ok(self.tasks.remove(task_index))
+  }
+  
+  /// Удаляет и возвращает подзадачу одной из задач.
+  pub fn remove_subtask(&mut self, task_id: &i64, subtask_id: &i64) 
+    -> Result<Subtask, SubtaskRemoveError>
+  {
+    let task_index: Option<usize> = self.tasks.iter().position(|t| t.id == *task_id);
+    if task_index.is_none() { return Err(SubtaskRemoveError{}); }
+    let task_index: usize = task_index.unwrap();
+    self.tasks[task_index].remove_subtask(subtask_id)
+  }
 }
 
 /// Доска.
@@ -123,6 +192,72 @@ pub struct Board {
   pub cards: Vec<Card>,
   /// Цвет фона.
   pub background_color: String,
+}
+
+pub trait Cards {
+  fn get_mut_card(&mut self, card_id: &i64) -> Result<&mut Card, GetMutCardError>;
+  fn get_mut_task(&mut self, card_id: &i64, task_id: &i64) -> Result<&mut Task, GetMutTaskError>;
+  fn get_mut_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<&mut Subtask, GetMutSubtaskError>;
+  fn remove_card(&mut self, card_id: &i64) -> Result<Card, CardRemoveError>;
+  fn remove_task(&mut self, card_id: &i64, task_id: &i64) -> Result<Task, TaskRemoveError>;
+  fn remove_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<Subtask, SubtaskRemoveError>;
+}
+
+impl Cards for Vec<Card> {
+  /// Возвращает мутабельную ссылку на карточку.
+  fn get_mut_card(&mut self, card_id: &i64) -> Result<&mut Card, GetMutCardError> {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(GetMutCardError{}); }
+    let card_index: usize = card_index.unwrap();
+    match self.get_mut(card_index) {
+      Some(card) => Ok(card),
+      _ => Err(GetMutCardError{}),
+    }
+  }
+  
+  /// Возвращает мутабельную ссылку на задачу в одной из карточек.
+  fn get_mut_task(&mut self, card_id: &i64, task_id: &i64) -> Result<&mut Task, GetMutTaskError> {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(GetMutTaskError{}); }
+    let card_index: usize = card_index.unwrap();
+    self[card_index].get_mut_task(task_id)
+  }
+  
+  /// Возвращает мутабельную ссылку на подзадачу.
+  fn get_mut_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) 
+    -> Result<&mut Subtask, GetMutSubtaskError>
+  {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(GetMutSubtaskError{}); }
+    let card_index: usize = card_index.unwrap();
+    self[card_index].get_mut_subtask(task_id, subtask_id)
+  }
+  
+  /// Удаляет и возвращает карточку.
+  fn remove_card(&mut self, card_id: &i64) -> Result<Card, CardRemoveError> {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(CardRemoveError{}); }
+    let card_index: usize = card_index.unwrap();
+    Ok(self.remove(card_index))
+  }
+  
+  /// Удаляет и возвращает задачу одной из карточек.
+  fn remove_task(&mut self, card_id: &i64, task_id: &i64) -> Result<Task, TaskRemoveError> {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(TaskRemoveError{}); }
+    let card_index: usize = card_index.unwrap();
+    self[card_index].remove_task(task_id)
+  }
+  
+  /// Удаляет и возвращает подзадачу.
+  fn remove_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) 
+    -> Result<Subtask, SubtaskRemoveError>
+  {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(SubtaskRemoveError{}); }
+    let card_index: usize = card_index.unwrap();
+    self[card_index].remove_subtask(task_id, subtask_id)
+  }
 }
 
 /// Пользователь.

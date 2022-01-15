@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use std::{boxed::Box, collections::HashSet};
 use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 
-use crate::model::{Board, Card, Task/*, Timelines, Tag*/};
+use crate::model::{Board, Cards, Card, Task, Subtask, Tag, Timelines};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -200,7 +200,9 @@ pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
 }
 
 /// Применяет патч на доску.
-pub async fn apply_patch_on_board(db: &Db, user_id: &i64, patch: &JsonValue) -> MResult<()> {
+pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch: &JsonValue)
+  -> MResult<()>
+{
   custom_error!{NTA{} = "Пользователь не может редактировать доску."};
   let mut changes = 0b_00_u8;
   if patch.get("title") != None {
@@ -212,22 +214,21 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, patch: &JsonValue) -> 
   if changes == 0b_00_u8 {
     return Ok(());
   };
-  let board_id = patch.get("board_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
-  let author_id: i64 = db.read("select author from boards where id = $1;", &[&board_id]).await?.get(0);
+  let author_id: i64 = db.read("select author from boards where id = $1;", &[board_id]).await?.get(0);
   if *user_id != author_id { return Err(Box::new(NTA{})); };
   match changes {
     0b_01_u8 => db.write(
       "update boards set title = $1 where id = $2;",
       &[
         &String::from(patch.get("title").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        &board_id
+        board_id
       ],
     ).await,
     0b_10_u8 => db.write(
       "update boards set background_color = $1 where id = $2;",
       &[
         &String::from(patch.get("background_color").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        &board_id
+        board_id
       ],
     ).await,
     _ => db.write(
@@ -235,7 +236,7 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, patch: &JsonValue) -> 
       &[
         &String::from(patch.get("title").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
         &String::from(patch.get("background_color").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        &board_id
+        board_id
       ],
     ).await,
   }
@@ -350,11 +351,7 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
     let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
     next_task_id += 1;
     let mut executors: Vec<i64> = Vec::new();
-    for j in 0..card.tasks[i].executors.len() {
-      if shared_with.contains(&card.tasks[i].executors[j]) {
-        executors.push(card.tasks[i].executors[j]);
-      };
-    };
+    card.tasks[i].executors.iter().filter(|e| shared_with.contains(e)).for_each(|i| executors.push(*i));
     card.tasks[i].executors = executors;
     let mut next_subtask_id: i64 = 1;
     for j in 0..card.tasks[i].subtasks.len() {
@@ -362,11 +359,10 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
       card.tasks[i].subtasks[j].author = *user_id;
       next_subtask_id += 1;
       let mut executors: Vec<i64> = Vec::new();
-      for k in 0..card.tasks[i].subtasks[j].executors.len() {
-        if shared_with.contains(&card.tasks[i].subtasks[j].executors[k]) {
-          executors.push(card.tasks[i].subtasks[j].executors[k]);
-        };
-      };
+      card.tasks[i].subtasks[j].executors
+                               .iter()
+                               .filter(|e| shared_with.contains(e))
+                               .for_each(|i| executors.push(*i));
       card.tasks[i].subtasks[j].executors = executors;
     };
     id_seqs_queries_data.push((subtasks_id_seq, next_subtask_id));
@@ -376,10 +372,7 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
   let mut id_seqs_queries = Vec::new();
   let query = "insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;";
   for i in 0..id_seqs_queries_data.len() {
-    let r: Vec<&(dyn ToSql + Sync)> = vec![
-      &id_seqs_queries_data[i].0,
-      &id_seqs_queries_data[i].1,
-    ];
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&id_seqs_queries_data[i].0, &id_seqs_queries_data[i].1];
     id_seqs_queries.push((query, r));
   };
   db.write_mul(id_seqs_queries).await?;
@@ -395,36 +388,35 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
 }
 
 /// Применяет патч на карточку.
-pub async fn apply_patch_on_card(db: &Db, user_id: &i64, patch: &JsonValue) -> MResult<()> {
-  let board_id = patch.get("board_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
-  let card_id = patch.get("card_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
-  let cards = db.read("select cards from boards where id = $1;", &[&board_id]).await?;
+pub async fn apply_patch_on_card(db: &Db, board_id: &i64, card_id: &i64, patch: &JsonValue)
+  -> MResult<()>
+{
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  let card_index: usize = cards.iter().position(|c| c.id == card_id).ok_or(NFO{})?;
+  let card = cards.get_mut_card(card_id)?;
   if let Some(title) = patch.get("title") {
-    cards[card_index].title = String::from(title.as_str().ok_or(NFO{})?);
+    card.title = String::from(title.as_str().ok_or(NFO{})?);
   };
   if let Some(background_color) = patch.get("background_color") {
-    cards[card_index].color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    card.color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
   };
   if let Some(text_color) = patch.get("text_color") {
-    cards[card_index].color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+    card.color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
   };
   let cards = serde_json::to_string(&cards)?;
-  db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
 }
 
 /// Удаляет карточку.
-pub async fn remove_card(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64) -> MResult<()> {
+pub async fn remove_card(db: &Db, board_id: &i64, card_id: &i64) -> MResult<()> {
   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  let card_index: usize = cards.iter().position(|c| c.id == *card_id).ok_or(NFO{})?;
-  cards.remove(card_index);
+  cards.remove_card(card_id)?;
   let cards = serde_json::to_string(&cards)?;
   let tasks_id_seq = board_id.to_string() + "_" + &card_id.to_string() + "%";
   let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
     ("delete from id_seqs where id like $1;", vec![&tasks_id_seq]),
-    ("update boards set cards = $1 where id = $2;", vec![&cards, &board_id]),
+    ("update boards set cards = $1 where id = $2;", vec![&cards, board_id]),
   ];
   db.write_mul(queries).await
 }
@@ -447,11 +439,7 @@ pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, 
   task.author = *user_id;
   next_task_id += 1;
   let mut executors: Vec<i64> = Vec::new();
-  for i in 0..task.executors.len() {
-    if shared_with.contains(&task.executors[i]) {
-      executors.push(task.executors[i]);
-    };
-  };
+  task.executors.iter().filter(|e| shared_with.contains(e)).for_each(|i| executors.push(*i));
   task.executors = executors;
   let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
   let mut next_subtask_id: i64 = 1;
@@ -460,18 +448,13 @@ pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, 
     task.subtasks[i].author = *user_id;
     next_subtask_id += 1;
     let mut executors: Vec<i64> = Vec::new();
-    for j in 0..task.subtasks[i].executors.len() {
-      if shared_with.contains(&task.subtasks[i].executors[j]) {
-        executors.push(task.subtasks[i].executors[j]);
-      };
-    };
+    task.subtasks[i].executors.iter().filter(|e| shared_with.contains(e)).for_each(|i| executors.push(*i));
     task.subtasks[i].executors = executors;
   };
-  let card_index: usize = cards.iter().position(|c| c.id == *card_id).ok_or(NFO{})?;
-  cards[card_index].tasks.push(task);
+  cards.get_mut_card(card_id)?.tasks.push(task);
   let cards = serde_json::to_string(&cards)?;
   let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
-    ("update boards set cards = $1 where id = $2;", vec![&cards, &board_id]),
+    ("update boards set cards = $1 where id = $2;", vec![&cards, board_id]),
     ("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", vec![&subtasks_id_seq, &next_subtask_id]),
     ("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", vec![&tasks_id_seq, &next_task_id]),
   ];
@@ -480,65 +463,205 @@ pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, 
 }
 
 /// Применяет патч на задачу.
-pub async fn apply_patch_on_task(db: &Db, user_id: &i64, patch: &JsonValue) -> MResult<()> {
-  let board_id = patch.get("board_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
-  let card_id = patch.get("card_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
-  let task_id = patch.get("task_id").ok_or(NFO{})?.as_i64().ok_or(NFO{})?;
-  let data = db.read("select cards, shared_with from boards where id = $1;", &[&board_id]).await?;
+pub async fn apply_patch_on_task(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  patch: &JsonValue
+) -> MResult<()> {
+  let data = db.read("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
-  let card_index: usize = cards.iter().position(|c| c.id == card_id).ok_or(NFO{})?;
-  let task_index: usize = cards[card_index].tasks.iter().position(|t| t.id == task_id).ok_or(NFO{})?;
+  let task = cards.get_mut_task(card_id, task_id)?;
   if let Some(title) = patch.get("title") {
-    cards[card_index].tasks[task_index].title = String::from(title.as_str().ok_or(NFO{})?);
+    task.title = String::from(title.as_str().ok_or(NFO{})?);
   };
   if let Some(executors) = patch.get("executors") {
     let shared_with: Vec<i64> = serde_json::from_str(data.get(1))?;
     let shared_with: HashSet<i64> = shared_with.into_iter().collect();
     let executors: Vec<i64> = serde_json::from_value(executors.clone())?;
-    cards[card_index].tasks[task_index].executors = Vec::new();
+    task.executors = Vec::new();
     executors.iter()
              .filter(|e| shared_with.contains(e))
-             .for_each(|i| cards[card_index].tasks[task_index].executors.push(*i));
+             .for_each(|i| task.executors.push(*i));
   };
   if let Some(exec) = patch.get("exec") {
-    cards[card_index].tasks[task_index].exec = exec.as_bool().ok_or(NFO{})?;
+    task.exec = exec.as_bool().ok_or(NFO{})?;
   };
   if let Some(notes) = patch.get("notes") {
-    cards[card_index].tasks[task_index].notes = String::from(notes.as_str().ok_or(NFO{})?);
+    task.notes = String::from(notes.as_str().ok_or(NFO{})?);
   };
   if let Some(background_color) = patch.get("background_color") {
-    cards[card_index].tasks[task_index]
-                     .color_set
-                     .background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    task.color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
   };
   if let Some(text_color) = patch.get("text_color") {
-    cards[card_index].tasks[task_index]
-                     .color_set
-                     .text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+    task.color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
   };
   let cards = serde_json::to_string(&cards)?;
-  db.write("update boards set cards = $1 where id = $2;", &[&cards, &board_id]).await
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
 }
 
 /// Удаляет задачу.
-pub async fn remove_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, task_id: &i64)
+pub async fn remove_task(db: &Db, board_id: &i64, card_id: &i64, task_id: &i64)
   -> MResult<()>
 {
-  let cards = db.read("select cards from boards where id = $1;", &[&board_id]).await?;
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  let card_index: usize = cards.iter().position(|c| c.id == *card_id).ok_or(NFO{})?;
-  let task_index: usize = cards[card_index].tasks.iter().position(|t| t.id == *task_id).ok_or(NFO{})?;
-  cards[card_index].tasks.remove(task_index);
+  cards.remove_task(card_id, task_id)?;
   let cards = serde_json::to_string(&cards)?;
-  let subtasks_id_seq = board_id.to_string() +
-                        "_" +
-                        &card_id.to_string() +
-                        "_" +
-                        &task_id.to_string() +
-                        "%";
+  let subtasks_id_seq = board_id.to_string() + "_" + &card_id.to_string() + "_" + &task_id.to_string();
   let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
-    ("delete from id_seqs where id like $1;", vec![&subtasks_id_seq]),
-    ("update boards set cards = $1 where id = $2;", vec![&cards, &board_id]),
+    ("delete from id_seqs where id = $1;", vec![&subtasks_id_seq]),
+    ("update boards set cards = $1 where id = $2;", vec![&cards, board_id]),
   ];
   db.write_mul(queries).await
+}
+
+/// Устанавливает метки на задачу.
+pub async fn set_tags_on_task(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  tags: &Vec<Tag>,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  cards.get_mut_task(card_id, task_id)?.tags = tags.to_vec();
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+}
+
+/// Устанавливает временные рамки на задачу.
+pub async fn set_timelines_on_task(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  timelines: &Timelines,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  cards.get_mut_task(card_id, task_id)?.timelines = timelines.clone();
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+}
+
+/// Создаёт подзадачу.
+pub async fn insert_subtask(
+  db: &Db,
+  user_id: &i64,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  mut subtask: Subtask,
+) -> MResult<i64> {
+  let subtasks_id_seq = board_id.to_string() + "_" + &card_id.to_string() + "_" + &task_id.to_string();
+  let data = db.read("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
+  let shared_with: Vec<i64> = serde_json::from_str(data.get(1))?;
+  let shared_with: HashSet<i64> = shared_with.into_iter().collect();
+  let mut next_subtask_id: i64 = match db.read("select val from id_seqs where id = $1;", &[&subtasks_id_seq]).await {
+    Ok(res) => res.get(0),
+    _ => 1,
+  };
+  subtask.id = next_subtask_id;
+  let subtask_id = next_subtask_id;
+  subtask.author = *user_id;
+  next_subtask_id += 1;
+  let mut executors: Vec<i64> = Vec::new();
+  subtask.executors.iter().filter(|e| shared_with.contains(e)).for_each(|i| executors.push(*i));
+  subtask.executors = executors;
+  cards.get_mut_task(card_id, task_id)?.subtasks.push(subtask);
+  let cards = serde_json::to_string(&cards)?;
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("update boards set cards = $1 where id = $2;", vec![&cards, board_id]),
+    ("insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;", vec![&subtasks_id_seq, &next_subtask_id]),
+  ];
+  db.write_mul(queries).await?;
+  Ok(subtask_id)
+}
+
+/// Применяет патч на подзадачу.
+pub async fn apply_patch_on_subtask(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+  patch: &JsonValue,
+) -> MResult<()> {
+  let data = db.read("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
+  let subtask = cards.get_mut_subtask(card_id, task_id, subtask_id)?;
+  if let Some(title) = patch.get("title") {
+    subtask.title = String::from(title.as_str().ok_or(NFO{})?);
+  };
+  if let Some(executors) = patch.get("executors") {
+    let shared_with: Vec<i64> = serde_json::from_str(data.get(1))?;
+    let shared_with: HashSet<i64> = shared_with.into_iter().collect();
+    let executors: Vec<i64> = serde_json::from_value(executors.clone())?;
+    subtask.executors = Vec::new();
+    executors.iter()
+             .filter(|e| shared_with.contains(e))
+             .for_each(|i| subtask.executors.push(*i));
+  };
+  if let Some(exec) = patch.get("exec") {
+    subtask.exec = exec.as_bool().ok_or(NFO{})?;
+  };
+  if let Some(background_color) = patch.get("background_color") {
+    subtask.color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+  };
+  if let Some(text_color) = patch.get("text_color") {
+    subtask.color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+  };
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+}
+
+/// Удаляет подзадачу.
+pub async fn remove_subtask(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  cards.remove_subtask(card_id, task_id, subtask_id)?;
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+}
+
+/// Устанавливает метки на подзадачу.
+pub async fn set_tags_on_subtask(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+  tags: &Vec<Tag>,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags = tags.to_vec();
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+}
+
+/// Устанавливает временные рамки на подзадачу.
+pub async fn set_timelines_on_subtask(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+  timelines: &Timelines,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  cards.get_mut_subtask(card_id, task_id, subtask_id)?.timelines = timelines.clone();
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
 }
