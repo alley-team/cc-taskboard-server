@@ -29,7 +29,7 @@ pub async fn router(req: Request<Body>, db: Db, admin_key: String, _addr: Socket
     (method, path) => match routes::auth_by_token(&ws).await {
       Ok((user_id, billed)) => match (method, path) {
         (&Method::PUT,    "/board")        => routes::create_board       (ws, user_id, billed).await,
-        (&Method::GET,    "/board")        => routes::get_board          (ws, user_id)        .await,
+        (&Method::POST,   "/board")        => routes::get_board          (ws, user_id)        .await,
         (&Method::PATCH,  "/board")        => routes::patch_board        (ws, user_id)        .await,
         (&Method::DELETE, "/board")        => routes::delete_board       (ws, user_id)        .await,
         (&Method::PUT,    "/card")         => routes::create_card        (ws, user_id)        .await,

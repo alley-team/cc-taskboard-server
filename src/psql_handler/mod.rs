@@ -183,8 +183,24 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
   if board.background_color.chars().nth(0) != Some('#') {
     return Err(Box::new(IncorrectBoard::IncompatibleColorBeginning));
   };
-  let id: i64 = db.read("select nextval(pg_get_serial_sequence('boards', 'id'));", &[]).await?.get(0);
-  db.write("insert into boards values ($1, $2, '[]', $3, '[]', $4);", &[&id, author, &board.title, &board.background_color]).await?;
+  let data = db.read_mul(vec![
+    ("select nextval(pg_get_serial_sequence('boards', 'id'));", vec![]),
+    ("select shared_boards from users where id = $1;", vec![author])
+  ]).await?;
+  let id: i64 = data[0].get(0);
+  let mut shared_boards = serde_json::from_str::<Vec<i64>>(data[1].get(0))?;
+  shared_boards.push(id);
+  let shared_with = vec![*author];
+  let shared_with = serde_json::to_string(&shared_with)?;
+  let shared_boards = serde_json::to_string(&shared_boards)?;
+  let board_queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    (
+      "insert into boards values ($1, $2, $3, $4, '[]', $5);",
+      vec![&id, author, &shared_with, &board.title, &board.background_color]
+    ),
+    ("update users set shared_boards = $1 where id = $2;", vec![&shared_boards, author])
+  ];
+  db.write_mul(board_queries).await?;
   Ok(id)
 }
 
@@ -196,7 +212,7 @@ pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
   let title: String = board_data.get(2);
   let cards: String = board_data.get(3);
   let background_color: String = board_data.get(4);
-  Ok(format!(r#"{{"id": {}, "author": {}, "shared_with": {}, "title": {}, "cards": {}, "background_color": {}}}"#, *board_id, author, shared_with, title, cards, background_color))
+  Ok(format!(r#"{{"id":{},"author":{},"shared_with":{},"title":"{}","cards":{},"background_color":{}}}"#, *board_id, author, shared_with, title, cards, background_color))
 }
 
 /// Применяет патч на доску.
