@@ -212,7 +212,7 @@ pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
   let title: String = board_data.get(2);
   let cards: String = board_data.get(3);
   let background_color: String = board_data.get(4);
-  Ok(format!(r#"{{"id":{},"author":{},"shared_with":{},"title":"{}","cards":{},"background_color":{}}}"#, *board_id, author, shared_with, title, cards, background_color))
+  Ok(format!(r#"{{"id":{},"author":{},"shared_with":{},"title":"{}","cards":{},"background_color":"{}"}}"#, *board_id, author, shared_with, title, cards, background_color))
 }
 
 /// Применяет патч на доску.

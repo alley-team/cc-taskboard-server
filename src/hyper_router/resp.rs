@@ -9,10 +9,23 @@ pub fn from_code_and_msg(code: u16, msg: Option<&str>) -> Response<Body> {
     None => Response::builder().status(code).body(Body::empty()).unwrap(),
     Some(msg) => Response::builder()
       .header("Content-Type", "text/html; charset=utf-8")
+      .header("Access-Control-Allow-Origin", "http://localhost:3000")
+      .header("Access-Control-Allow-Credentials", "true")
       .status(code)
       .body(Body::from(String::from(msg)))
       .unwrap(),
   }
+}
+
+/// Разрешает все запросы к серверу.
+pub fn options_answer() -> Response<Body> {
+  Response::builder()
+    .header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE")
+    .header("Access-Control-Allow-Headers", "App-Token")
+    .header("Access-Control-Allow-Origin", "http://localhost:3000")
+    .header("Access-Control-Allow-Credentials", "true")
+    .body(Body::empty())
+    .unwrap()
 }
 
 // Выдаёт ошибук 400 BAD REQUEST.

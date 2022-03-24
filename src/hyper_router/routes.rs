@@ -37,6 +37,11 @@ use crate::psql_handler;
 use crate::sec::auth::{extract_creds, AdminCredentials, TokenAuth, SignInCredentials, SignUpCredentials};
 use crate::sec::tokens_vld;
 
+/// Отвечает на предзапросы браузера.
+pub async fn pre_request() -> Response<Body> {
+  resp::options_answer()
+}
+
 /// Отвечает за авторизацию администратора и первоначальную настройку базы данных.
 pub async fn db_setup(ws: Workspace, admin_key: String) -> Response<Body> {
   let key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
