@@ -1,6 +1,5 @@
 //! Сервер CC TaskBoard.
 
-mod hyper_cli;
 mod hyper_router;
 mod model;
 mod psql_handler;

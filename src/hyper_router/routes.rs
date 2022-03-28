@@ -175,7 +175,7 @@ pub async fn get_board(ws: Workspace, user_id: i64) -> Response<Body> {
 
 /// Патчит доску, изменяя в ней определённые свойства.
 ///
-/// Для доски это - title и background_color. Дочерними карточками управляют методы карточек.
+/// Для доски это - title, background_color, header_background_color и header_text_color. Дочерними карточками управляют методы карточек.
 ///
 /// Запрос представляет из себя JSON с id доски. Изменения принимаются только тогда, когда автором доски является данный пользователь.
 pub async fn patch_board(ws: Workspace, user_id: i64) -> Response<Body> {
@@ -246,7 +246,7 @@ pub async fn create_card(ws: Workspace, user_id: i64) -> Response<Body> {
 
 /// Патчит карточку, изменяя определённые свойства в ней.
 ///
-/// Для карточки это - title, background_color и text_color.
+/// Для карточки это - title, background_color, header_background_color и header_text_color.
 pub async fn patch_card(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
@@ -347,8 +347,6 @@ pub async fn create_task(ws: Workspace, user_id: i64) -> Response<Body> {
 /// 2. Назначенных исполнителей задачи.
 /// 3. Статус выполнения задачи (выполнена/не выполнена).
 /// 4. Заметки к задаче.
-/// 5. Цвет текста.
-/// 6. Цвет фона.
 pub async fn patch_task(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,
@@ -555,8 +553,6 @@ pub async fn create_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
 /// 1. Название подзадачи.
 /// 2. Назначенных исполнителей подзадачи.
 /// 3. Статус выполнения подзадачи (выполнена/не выполнена).
-/// 4. Цвет текста.
-/// 5. Цвет фона.
 pub async fn patch_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
   let patch = match extract::<JsonValue>(ws.req).await {
     Ok(v) => v,

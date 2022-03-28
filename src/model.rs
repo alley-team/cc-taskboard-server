@@ -23,15 +23,6 @@ pub struct Workspace {
   pub db: Db,
 }
 
-/// Набор цветов для раскраски компонента.
-#[derive(Clone, Deserialize, Serialize)]
-pub struct ColorSet {
-  /// Цвет текста.
-  pub text_color: String,
-  /// Цвет фона.
-  pub background_color: String,
-}
-
 /// Временные рамки для задач и подзадач.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Timelines {
@@ -50,8 +41,10 @@ pub struct Timelines {
 pub struct Tag {
   /// Название метки.
   pub title: String,
-  /// Раскраска метки.
-  pub color_set: ColorSet,
+  // Цвет текста метки.
+  pub text_color: String,
+  /// Цвет фона метки.
+  pub background_color: String,
 }
 
 /// Подзадача.
@@ -71,8 +64,6 @@ pub struct Subtask {
   pub tags: Vec<Tag>,
   /// Временные рамки для подзадачи.
   pub timelines: Timelines,
-  /// Раскраска подзадачи.
-  pub color_set: ColorSet,
 }
 
 /// Задача.
@@ -96,8 +87,6 @@ pub struct Task {
   pub tags: Vec<Tag>,
   /// Временные рамки для задачи.
   pub timelines: Timelines,
-  /// Раскраска задачи.
-  pub color_set: ColorSet,
 }
 
 impl Task {
@@ -132,8 +121,12 @@ pub struct Card {
   pub title: String,
   /// Список задач.
   pub tasks: Vec<Task>,
-  /// Раскраска карточки.
-  pub color_set: ColorSet,
+  // Цвет текста заголовка.
+  pub header_text_color: String,
+  /// Цвет фона заголовка.
+  pub header_background_color: String,
+  /// Цвет фона карточки.
+  pub background_color: String,
 }
 
 impl Card {
@@ -177,20 +170,31 @@ impl Card {
   }
 }
 
+/// Заголовок доски.
+#[derive(Deserialize, Serialize)]
+pub struct BoardHeader {
+  /// Название доски.
+  pub title: String,
+  /// Цвет текста заголовка.
+  pub header_text_color: String,
+  /// Цвет фона заголовка.
+  pub header_background_color: String,
+}
+
 /// Доска.
 #[derive(Deserialize, Serialize)]
 pub struct Board {
   /// Уникальный идентификатор доски в базе данных.
   pub id: i64,
+  /// Заголовок доски.
+  pub header: BoardHeader,
   /// Автор доски.
   pub author: i64,
   /// Список пользователей, у которых есть доступ к карточке.
   pub shared_with: Vec<i64>,
-  /// Название доски.
-  pub title: String,
   /// Список карточек.
   pub cards: Vec<Card>,
-  /// Цвет фона.
+  /// Цвет фона доски.
   pub background_color: String,
 }
 
@@ -286,8 +290,7 @@ pub async fn extract<T>(req: Request<Body>) -> Result<T, ExtractionError>
   where
     T: DeserializeOwned,
 {
-  let body = req.into_body();
-  let body = match to_bytes(body).await {
+  let body = match to_bytes(req.into_body()).await {
     Err(_) => return Err(ExtractionError::FromBody),
     Ok(v) => v,
   };
@@ -302,9 +305,8 @@ pub async fn extract<T>(req: Request<Body>) -> Result<T, ExtractionError>
       Ok(v) => v,
     },
   };
-  let obj = serde_json::from_str::<T>(&body);
-  match obj {
-    Err(_) => return Err(ExtractionError::FromJson),
+  match serde_json::from_str::<T>(&body) {
+    Err(_) => Err(ExtractionError::FromJson),
     Ok(v) => Ok(v),
   }
 }

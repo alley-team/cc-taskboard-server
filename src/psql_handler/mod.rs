@@ -79,7 +79,7 @@ pub async fn db_setup(db: &Db) -> MResult<()> {
   db.write_mul(vec![
     ("create table if not exists cc_keys (id bigserial, key varchar unique);", vec![]), 
     ("create table if not exists users (id bigserial, login varchar unique, shared_boards varchar, user_creds varchar, apd varchar);", vec![]), 
-    ("create table if not exists boards (id bigserial, author bigint, shared_with varchar, title varchar, cards varchar, background_color varchar);", vec![]), 
+    ("create table if not exists boards (id bigserial, author bigint, shared_with varchar, header varchar, cards varchar, background_color varchar);", vec![]), 
     ("create table if not exists id_seqs (id varchar unique, val bigint);", vec![])
   ]).await
 }
@@ -176,11 +176,15 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
     IncompatibleColorLen = "Цвет не представлен в виде #RRGGBB.",
     IncompatibleColorBeginning = "Цвет не начинается с #."
   };
-  if board.title.is_empty() { return Err(Box::new(IncorrectBoard::EmptyTitle)); };
-  if board.background_color.bytes().count() != 7 {
+  if board.header.title.is_empty() { return Err(Box::new(IncorrectBoard::EmptyTitle)); };
+  if board.background_color.bytes().count() != 7 || 
+     board.header.header_background_color.bytes().count() != 7 ||
+     board.header.header_text_color.bytes().count() != 7 {
     return Err(Box::new(IncorrectBoard::IncompatibleColorLen));
   };
-  if board.background_color.chars().nth(0) != Some('#') {
+  if board.background_color.chars().nth(0) != Some('#') ||
+     board.header.header_background_color.chars().nth(0) != Some('#') ||
+     board.header.header_text_color.chars().nth(0) != Some('#') {
     return Err(Box::new(IncorrectBoard::IncompatibleColorBeginning));
   };
   let data = db.read_mul(vec![
@@ -193,10 +197,11 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
   let shared_with = vec![*author];
   let shared_with = serde_json::to_string(&shared_with)?;
   let shared_boards = serde_json::to_string(&shared_boards)?;
+  let header = serde_json::to_string(&board.header)?;
   let board_queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
     (
-      "insert into boards values ($1, $2, $3, $4, '[]', $5);",
-      vec![&id, author, &shared_with, &board.title, &board.background_color]
+      "insert into boards values ($1, $2, $3, $4, '[]', $5, $6, $7);",
+      vec![&id, author, &shared_with, &header, &board.background_color]
     ),
     ("update users set shared_boards = $1 where id = $2;", vec![&shared_boards, author])
   ];
@@ -206,56 +211,44 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
 
 /// Отдаёт доску пользователю.
 pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
-  let board_data = db.read("select author, shared_with, title, cards, background_color from boards where id = $1;", &[board_id]).await?;
+  let board_data = db.read("select author, shared_with, header, cards, background_color from boards where id = $1;", &[board_id]).await?;
   let author: i64 = board_data.get(0);
   let shared_with: String = board_data.get(1);
-  let title: String = board_data.get(2);
+  let header: String = board_data.get(2);
   let cards: String = board_data.get(3);
   let background_color: String = board_data.get(4);
-  Ok(format!(r#"{{"id":{},"author":{},"shared_with":{},"title":"{}","cards":{},"background_color":"{}"}}"#, *board_id, author, shared_with, title, cards, background_color))
+  Ok(format!(r#"{{"id":{},"author":{},"shared_with":{},"header":{},"cards":{},"background_color":"{}"}}"#, *board_id, author, shared_with, header, cards, background_color))
 }
 
 /// Применяет патч на доску.
 pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch: &JsonValue)
   -> MResult<()>
 {
+  panic!("Wrong implementation. Board's header isn't open-accessed.");
   custom_error!{NTA{} = "Пользователь не может редактировать доску."};
-  let mut changes = 0b_00_u8;
-  if patch.get("title") != None {
-    changes += 0b_01_u8;
-  };
-  if patch.get("background_color") != None {
-    changes += 0b_10_u8;
-  };
-  if changes == 0b_00_u8 {
-    return Ok(());
-  };
   let author_id: i64 = db.read("select author from boards where id = $1;", &[board_id]).await?.get(0);
   if *user_id != author_id { return Err(Box::new(NTA{})); };
-  match changes {
-    0b_01_u8 => db.write(
-      "update boards set title = $1 where id = $2;",
-      &[
-        &String::from(patch.get("title").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        board_id
-      ],
-    ).await,
-    0b_10_u8 => db.write(
-      "update boards set background_color = $1 where id = $2;",
-      &[
-        &String::from(patch.get("background_color").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        board_id
-      ],
-    ).await,
-    _ => db.write(
-      "update boards set title = $1, background_color = $2 where id = $3;",
-      &[
-        &String::from(patch.get("title").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        &String::from(patch.get("background_color").ok_or(NFO{})?.as_str().ok_or(NFO{})?),
-        board_id
-      ],
-    ).await,
-  }
+  if let Some(title) = patch.get("title") {
+    let title = String::from(title.as_str().ok_or(NFO{})?);
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&title, board_id];
+    db.write("update boards set title = $1 where id = $2;", &r).await?;
+  };
+  if let Some(background_color) = patch.get("background_color") {
+    let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&background_color, board_id];
+    db.write("update boards set background_color = $1 where id = $2;", &r).await?;
+  };
+  if let Some(header_background_color) = patch.get("header_background_color") {
+    let header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&header_background_color, board_id];
+    db.write("update boards set header_background_color = $1 where id = $2;", &r).await?;
+  };
+  if let Some(header_text_color) = patch.get("header_text_color") {
+    let header_text_color = String::from(header_text_color.as_str().ok_or(NFO{})?);
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&header_text_color, board_id];
+    db.write("update boards set header_text_color = $1 where id = $2;", &r).await?;
+  };
+  Ok(())
 }
 
 /// Удаляет доску, если её автор - данный пользователь.
@@ -414,10 +407,13 @@ pub async fn apply_patch_on_card(db: &Db, board_id: &i64, card_id: &i64, patch: 
     card.title = String::from(title.as_str().ok_or(NFO{})?);
   };
   if let Some(background_color) = patch.get("background_color") {
-    card.color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    card.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
   };
-  if let Some(text_color) = patch.get("text_color") {
-    card.color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+  if let Some(header_text_color) = patch.get("header_text_color") {
+    card.header_text_color = String::from(header_text_color.as_str().ok_or(NFO{})?);
+  };
+  if let Some(header_background_color) = patch.get("header_background_color") {
+    card.header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);
   };
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
@@ -506,12 +502,6 @@ pub async fn apply_patch_on_task(
   };
   if let Some(notes) = patch.get("notes") {
     task.notes = String::from(notes.as_str().ok_or(NFO{})?);
-  };
-  if let Some(background_color) = patch.get("background_color") {
-    task.color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
-  };
-  if let Some(text_color) = patch.get("text_color") {
-    task.color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
   };
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
@@ -624,12 +614,6 @@ pub async fn apply_patch_on_subtask(
   };
   if let Some(exec) = patch.get("exec") {
     subtask.exec = exec.as_bool().ok_or(NFO{})?;
-  };
-  if let Some(background_color) = patch.get("background_color") {
-    subtask.color_set.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
-  };
-  if let Some(text_color) = patch.get("text_color") {
-    subtask.color_set.text_color = String::from(text_color.as_str().ok_or(NFO{})?);
   };
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
