@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use std::{boxed::Box, collections::HashSet};
 use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 
-use crate::model::{Board, Cards, Card, Task, Subtask, Tag, Timelines};
+use crate::model::{Board, BoardHeader, Cards, Card, Task, Subtask, Tag, Timelines};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -200,7 +200,7 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
   let header = serde_json::to_string(&board.header)?;
   let board_queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
     (
-      "insert into boards values ($1, $2, $3, $4, '[]', $5, $6, $7);",
+      "insert into boards values ($1, $2, $3, $4, '[]', $5);",
       vec![&id, author, &shared_with, &header, &board.background_color]
     ),
     ("update users set shared_boards = $1 where id = $2;", vec![&shared_boards, author])
@@ -224,14 +224,15 @@ pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
 pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch: &JsonValue)
   -> MResult<()>
 {
-  panic!("Wrong implementation. Board's header isn't open-accessed.");
   custom_error!{NTA{} = "Пользователь не может редактировать доску."};
-  let author_id: i64 = db.read("select author from boards where id = $1;", &[board_id]).await?.get(0);
+  let author_id_and_header = db.read("select author, header from boards where id = $1;", &[board_id]).await?;
+  let author_id: i64 = author_id_and_header.get(0);
   if *user_id != author_id { return Err(Box::new(NTA{})); };
+  let header: String = author_id_and_header.get(1);
+  let mut header: BoardHeader = serde_json::from_str(&header)?;
   if let Some(title) = patch.get("title") {
     let title = String::from(title.as_str().ok_or(NFO{})?);
-    let r: Vec<&(dyn ToSql + Sync)> = vec![&title, board_id];
-    db.write("update boards set title = $1 where id = $2;", &r).await?;
+    header.title = title;
   };
   if let Some(background_color) = patch.get("background_color") {
     let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
@@ -240,14 +241,15 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch:
   };
   if let Some(header_background_color) = patch.get("header_background_color") {
     let header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);
-    let r: Vec<&(dyn ToSql + Sync)> = vec![&header_background_color, board_id];
-    db.write("update boards set header_background_color = $1 where id = $2;", &r).await?;
+    header.header_background_color = header_background_color;
   };
   if let Some(header_text_color) = patch.get("header_text_color") {
     let header_text_color = String::from(header_text_color.as_str().ok_or(NFO{})?);
-    let r: Vec<&(dyn ToSql + Sync)> = vec![&header_text_color, board_id];
-    db.write("update boards set header_text_color = $1 where id = $2;", &r).await?;
+    header.header_text_color = header_text_color;
   };
+  let header = serde_json::to_string(&header)?;
+  let r: Vec<&(dyn ToSql + Sync)> = vec![&header, board_id];
+  db.write("update boards set header = $1 where id = $2;", &r).await?;
   Ok(())
 }
 
