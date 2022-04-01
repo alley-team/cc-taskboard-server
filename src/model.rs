@@ -170,6 +170,19 @@ impl Card {
   }
 }
 
+/// Краткая информация о досках пользователя.
+#[derive(Deserialize, Serialize)]
+pub struct BoardsShort {
+  /// Идентификатор доски.
+  pub id: i64,
+  /// Название доски.
+  pub title: String,
+  /// Цвет текста заголовка.
+  pub header_text_color: String,
+  /// Цвет фона заголовка.
+  pub header_background_color: String,
+}
+
 /// Заголовок доски.
 #[derive(Deserialize, Serialize)]
 pub struct BoardHeader {

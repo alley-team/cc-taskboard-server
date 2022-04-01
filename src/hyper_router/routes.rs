@@ -134,6 +134,14 @@ pub async fn auth_by_token(ws: &Workspace) -> Result<(i64, bool), (u16, String)>
   Ok((token_auth.id, billed))
 }
 
+/// Отправляет список доступных для пользователя досок.
+pub async fn list_boards(ws: Workspace, user_id: i64) -> Response<Body> {
+  match psql_handler::list_boards(&ws.db, &user_id).await {
+    Ok(list) => resp::from_code_and_msg(200, Some(&list)),
+    _ => resp::from_code_and_msg(500, Some("Не удалось получить список досок.")),
+  }
+}
+
 /// Создаёт доску для пользователя.
 pub async fn create_board(ws: Workspace, user_id: i64, billed: bool) -> Response<Body> {
   if !billed {

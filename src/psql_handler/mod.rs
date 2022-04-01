@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use std::{boxed::Box, collections::HashSet};
 use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 
-use crate::model::{Board, BoardHeader, Cards, Card, Task, Subtask, Tag, Timelines};
+use crate::model::{Board, BoardsShort, BoardHeader, Cards, Card, Task, Subtask, Tag, Timelines};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
 use crate::sec::key_gen;
 
@@ -167,6 +167,20 @@ pub async fn write_tokens(db: &Db, id: &i64, tokens: &Vec<Token>) -> MResult<()>
   user_credentials.tokens = tokens.clone();
   let user_credentials = serde_json::to_string(&user_credentials)?;
   db.write("update users set user_creds = $1 where id = $2;", &[&user_credentials, id]).await
+}
+
+/// Отдаёт список досок пользователя.
+pub async fn list_boards(db: &Db, id: &i64) -> MResult<String> {
+  let boards = db.read("select shared_boards from users where id = $1;", &[id]).await?;
+  let boards: Vec<i64> = serde_json::from_str(boards.get(0))?;
+  let mut shorts: Vec<BoardsShort> = vec![];
+  boards.iter().for_each(|v| {
+    let header = db.read("select header from boards where id = $1;", &[&v]).await?;
+    let short = BoardsShort {
+      id: v,
+      
+    };
+  });
 }
 
 /// Создаёт доску.
