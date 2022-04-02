@@ -174,13 +174,19 @@ pub async fn list_boards(db: &Db, id: &i64) -> MResult<String> {
   let boards = db.read("select shared_boards from users where id = $1;", &[id]).await?;
   let boards: Vec<i64> = serde_json::from_str(boards.get(0))?;
   let mut shorts: Vec<BoardsShort> = vec![];
-  boards.iter().for_each(|v| {
-    let header = db.read("select header from boards where id = $1;", &[&v]).await?;
+  for i in 0..boards.len() {
+    let header: String = db.read("select header from boards where id = $1;", &[&boards[i]]).await?.get(0);
+    let header: JsonValue = serde_json::from_str(&header)?;
     let short = BoardsShort {
-      id: v,
-      
+      id: boards[i],
+      title: header["title"].as_str().unwrap().to_string(),
+      header_text_color: header["header_text_color"].as_str().unwrap().to_string(),
+      header_background_color: header["header_background_color"].as_str().unwrap().to_string(),
     };
-  });
+    shorts.push(short);
+  }
+  let shorts = serde_json::to_string(&shorts)?;
+  Ok(shorts)
 }
 
 /// Создаёт доску.
