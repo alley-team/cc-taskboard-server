@@ -320,9 +320,9 @@ pub async fn remove_board(db: &Db, user_id: &i64, board_id: &i64) -> MResult<()>
     shared_boards_queries.push(("update users set shared_boards = $1 where id = $2;", r));
   };
   shared_boards_queries.push(("delete from boards where id = $1;", vec![board_id]));
+  let board_id_as_str = board_id.to_string();
   shared_boards_queries.push((
-    "delete from id_seqs where id like concat(cast($1 as varchar), '%');",
-    vec![board_id]
+    "delete from id_seqs where id like concat($1, '_%');", vec![&board_id_as_str]
   ));
   db.write_mul(shared_boards_queries).await
 }
