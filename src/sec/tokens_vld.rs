@@ -10,6 +10,7 @@ use crate::sec::auth::TokenAuth;
 ///
 /// TODO сделать Redis-подключение и хранить данные по токенам вместо того, чтобы каждый раз валидировать их через базу данных.
 /// WARNING проверка оплаты идёт каждый 31 день, а не ровно в день оплаты
+/// TODO Не хранить токены в открытом виде!
 pub async fn verify_user(db: &Db, token_auth: &TokenAuth) -> (bool, bool) {
   let (mut tokens, billing) = get_tokens_and_billing(db, &token_auth.id).await.unwrap();
   // 1. Проверка токенов
