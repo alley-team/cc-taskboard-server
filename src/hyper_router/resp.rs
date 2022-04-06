@@ -11,6 +11,7 @@ pub fn from_code_and_msg(code: u16, msg: Option<&str>) -> Response<Body> {
       .header("Content-Type", "text/html; charset=utf-8")
       .header("Access-Control-Allow-Origin", "http://localhost:3000")
       .header("Access-Control-Allow-Credentials", "true")
+      .header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
       .status(code)
       .body(Body::from(String::from(msg)))
       .unwrap(),
@@ -20,10 +21,10 @@ pub fn from_code_and_msg(code: u16, msg: Option<&str>) -> Response<Body> {
 /// Разрешает все запросы к серверу.
 pub fn options_answer() -> Response<Body> {
   Response::builder()
-    .header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE")
-    .header("Access-Control-Allow-Headers", "App-Token")
     .header("Access-Control-Allow-Origin", "http://localhost:3000")
     .header("Access-Control-Allow-Credentials", "true")
+    .header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+    .header("Access-Control-Allow-Headers", "App-Token")
     .body(Body::empty())
     .unwrap()
 }
