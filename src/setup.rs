@@ -1,4 +1,4 @@
-use std::{env, io, io::Read, process, fs, boxed::Box};
+use std::{env, io, io::Read, process, fs, boxed::Box, net::SocketAddr};
 use serde::{Deserialize, Serialize};
 
 /// Конфигурация приложения.
@@ -9,7 +9,7 @@ pub struct AppConfig {
   /// Ключ аутентификации администратора.
   pub admin_key: String,
   /// Порт прослушивания сервера.
-  pub hyper_port: u16,
+  pub hyper_addr: SocketAddr,
 }
 
 impl AppConfig {
@@ -46,11 +46,11 @@ impl AppConfig {
     stdin.read_line(&mut buffer)?;
     let buffer = buffer.trim();
     let pg = pg + &buffer + &String::from("' connect_timeout=10 keepalives=0");
-    println!("Введите номер порта сервера:");
+    println!("Введите IP-адрес и порт сервера:");
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
     let buffer = buffer.trim();
-    let hyper_port: u16 = buffer.parse()?;
+    let hyper_addr: SocketAddr = buffer.parse()?;
     println!("Введите ключ для аутентификации администратора (минимум 64 символа):");
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
@@ -58,7 +58,7 @@ impl AppConfig {
     match admin_key.len() < 64 {
       true => Err(Box::new(io::Error::new(io::ErrorKind::Other, 
                                           "Длина ключа администратора меньше 64 символов."))),
-      false => Ok(AppConfig { pg, admin_key, hyper_port }),
+      false => Ok(AppConfig { pg, admin_key, hyper_addr }),
     }
   }
   

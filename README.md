@@ -24,7 +24,7 @@ cargo build --release
 {
   "pg": "host=... user='...' password='...' connect_timeout=10 keepalives=0",
   "admin_key": "...",
-  "hyper_port": 8004
+  "hyper_addr": "127.0.0.1:8004"
 }
 ```
 
