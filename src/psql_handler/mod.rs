@@ -545,20 +545,20 @@ pub async fn remove_task(db: &Db, board_id: &i64, card_id: &i64, task_id: &i64)
   db.write_mul(queries).await
 }
 
-/// Устанавливает метки на задачу.
-pub async fn set_tags_on_task(
-  db: &Db,
-  board_id: &i64,
-  card_id: &i64,
-  task_id: &i64,
-  tags: &Vec<Tag>,
-) -> MResult<()> {
-  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
-  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  cards.get_mut_task(card_id, task_id)?.tags = tags.to_vec();
-  let cards = serde_json::to_string(&cards)?;
-  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
-}
+// Устанавливает метки на задачу.
+// pub async fn set_tags_on_task(
+//   db: &Db,
+//   board_id: &i64,
+//   card_id: &i64,
+//   task_id: &i64,
+//   tags: &Vec<Tag>,
+// ) -> MResult<()> {
+//   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+//   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+//   cards.get_mut_task(card_id, task_id)?.tags = tags.to_vec();
+//   let cards = serde_json::to_string(&cards)?;
+//   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+// }
 
 /// Устанавливает временные рамки на задачу.
 pub async fn set_timelines_on_task(
@@ -656,21 +656,21 @@ pub async fn remove_subtask(
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
 }
 
-/// Устанавливает метки на подзадачу.
-pub async fn set_tags_on_subtask(
-  db: &Db,
-  board_id: &i64,
-  card_id: &i64,
-  task_id: &i64,
-  subtask_id: &i64,
-  tags: &Vec<Tag>,
-) -> MResult<()> {
-  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
-  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags = tags.to_vec();
-  let cards = serde_json::to_string(&cards)?;
-  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
-}
+// Устанавливает метки на подзадачу.
+// pub async fn set_tags_on_subtask(
+//   db: &Db,
+//   board_id: &i64,
+//   card_id: &i64,
+//   task_id: &i64,
+//   subtask_id: &i64,
+//   tags: &Vec<Tag>,
+// ) -> MResult<()> {
+//   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+//   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+//   cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags = tags.to_vec();
+//   let cards = serde_json::to_string(&cards)?;
+//   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+// }
 
 /// Устанавливает временные рамки на подзадачу.
 pub async fn set_timelines_on_subtask(
@@ -687,3 +687,57 @@ pub async fn set_timelines_on_subtask(
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
 }
+
+/// Получает теги подзадачи.
+pub async fn get_subtask_tags(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  let tags = cards.get_subtask(card_id, task_id, subtask_id)?.tags;
+  serde_json::to_string(&tags)?
+}
+
+/// Получает теги задачи.
+pub async fn get_task_tags(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+) -> MResult<()> {
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  let tags = cards.get_task(card_id, task_id)?.tags;
+  serde_json::to_string(&tags)?
+}
+
+/// Создаёт тег у подзадачи.
+pub async fn create_tag_at_subtask(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+  tag: &Tag,
+) -> MResult<()> {
+  let subtask_tags_id_seq = 
+    board_id.to_string() + "_" + 
+    &card_id.to_string() + "_" + 
+    &task_id.to_string() + "_" +
+    &subtask_id.to_string() + "t";
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("select cards from boards where id = $1;", &[board_id]),
+    ("select val from id_seqs where id = $1;", &[&subtask_tags_id_seq]),
+  ];
+  let results = db.read_mul(queries).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(results.get(0))?;
+  let id: i64 = results.get(1);
+  cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags.push(tag.clone());
+  let cards = serde_json::to_string(&cards)?;
+  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await?;
+}
+

@@ -8,9 +8,12 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::psql_handler::Db;
 use crate::sec::auth::UserCredentials;
 
-custom_error!{ pub GetMutCardError{} = "Не удалось получить карточку." }
-custom_error!{ pub GetMutTaskError{} = "Не удалось получить задачу." }
-custom_error!{ pub GetMutSubtaskError{} = "Не удалось получить подзадачу." }
+custom_error!{ pub GetMutCardError{} = "Не удалось получить мутабельную карточку." }
+custom_error!{ pub GetMutTaskError{} = "Не удалось получить мутабельную задачу." }
+custom_error!{ pub GetMutSubtaskError{} = "Не удалось получить мутабельную подзадачу." }
+custom_error!{ pub GetCardError{} = "Не удалось получить карточку." }
+custom_error!{ pub GetTaskError{} = "Не удалось получить задачу." }
+custom_error!{ pub GetSubtaskError{} = "Не удалось получить подзадачу." }
 custom_error!{ pub CardRemoveError{} = "Не удалось удалить карточку." }
 custom_error!{ pub TaskRemoveError{} = "Не удалось удалить задачу." }
 custom_error!{ pub SubtaskRemoveError{} = "Не удалось удалить подзадачу." }
@@ -39,6 +42,8 @@ pub struct Timelines {
 /// Метка.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Tag {
+  /// Уникальный идентификатор тега в текущем списке тегов сущности.
+  pub id: i64,
   /// Название метки.
   pub title: String,
   // Цвет текста метки.
@@ -101,6 +106,17 @@ impl Task {
     }
   }
   
+  /// Возвращает ссылку на подзадачу.
+  pub fn get_subtask(&self, subtask_id: &i64) -> Result<&Subtask, GetSubtaskError> {
+    let subtask_index: Option<usize> = self.subtasks.iter().position(|st| st.id == *subtask_id);
+    if subtask_index.is_none() { return Err(GetSubtaskError{}); }
+    let subtask_index: usize = subtask_index.unwrap();
+    match self.subtasks.get(subtask_index) {
+      Some(subtask) => Ok(subtask),
+      _ => Err(GetSubtaskError{}),
+    }
+  }
+  
   /// Удаляет и возвращает подзадачу.
   pub fn remove_subtask(&mut self, subtask_id: &i64) -> Result<Subtask, SubtaskRemoveError> {
     let subtask_index: Option<usize> = self.subtasks.iter().position(|st| st.id == *subtask_id);
@@ -141,6 +157,17 @@ impl Card {
     }
   }
   
+  /// Возвращает ссылку на задачу.
+  pub fn get_task(&self, task_id: &i64) -> Result<&Task, GetTaskError> {
+    let task_index: Option<usize> = self.tasks.iter().position(|t| t.id == *task_id);
+    if task_index.is_none() { return Err(GetTaskError{}); }
+    let task_index: usize = task_index.unwrap();
+    match self.tasks.get(task_index) {
+      Some(task) => Ok(task),
+      _ => Err(GetTaskError{}),
+    }
+  }
+  
   /// Возвращает мутабельную ссылку на подзадачу одной из задач.
   pub fn get_mut_subtask(&mut self, task_id: &i64, subtask_id: &i64) 
     -> Result<&mut Subtask, GetMutSubtaskError>
@@ -149,6 +176,14 @@ impl Card {
     if task_index.is_none() { return Err(GetMutSubtaskError{}); }
     let task_index: usize = task_index.unwrap();
     self.tasks[task_index].get_mut_subtask(subtask_id)
+  }
+  
+  /// Возвращает ссылку на подзадачу одной из задач.
+  pub fn get_subtask(&self, task_id: &i64, subtask_id: &i64) -> Result<&Subtask, GetSubtaskError> {
+    let task_index: Option<usize> = self.tasks.iter().position(|t| t.id == *task_id);
+    if task_index.is_none() { return Err(GetSubtaskError{}); }
+    let task_index: usize = task_index.unwrap();
+    self.tasks[task_index].get_subtask(subtask_id)
   }
   
   /// Удаляет и возвращает задачу.
@@ -214,10 +249,16 @@ pub struct Board {
 pub trait Cards {
   fn get_mut_card(&mut self, card_id: &i64) -> Result<&mut Card, GetMutCardError>;
   fn get_mut_task(&mut self, card_id: &i64, task_id: &i64) -> Result<&mut Task, GetMutTaskError>;
-  fn get_mut_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<&mut Subtask, GetMutSubtaskError>;
+  fn get_mut_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64)
+    -> Result<&mut Subtask, GetMutSubtaskError>;
+  fn get_card(&self, card_id: &i64) -> Result<&Card, GetCardError>;
+  fn get_task(&self, card_id: &i64, task_id: &i64) -> Result<&Task, GetTaskError>;
+  fn get_subtask(&self, card_id: &i64, task_id: &i64, subtask_id: &i64)
+    -> Result<&Subtask, GetSubtaskError>;
   fn remove_card(&mut self, card_id: &i64) -> Result<Card, CardRemoveError>;
   fn remove_task(&mut self, card_id: &i64, task_id: &i64) -> Result<Task, TaskRemoveError>;
-  fn remove_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<Subtask, SubtaskRemoveError>;
+  fn remove_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) 
+    -> Result<Subtask, SubtaskRemoveError>;
 }
 
 impl Cards for Vec<Card> {
@@ -232,12 +273,33 @@ impl Cards for Vec<Card> {
     }
   }
   
+  /// Возвращает ссылку на карточку.
+  fn get_card(&self, card_id: &i64) -> Result<&Card, GetCardError> {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(GetCardError{}); }
+    let card_index: usize = card_index.unwrap();
+    match self.get(card_index) {
+      Some(card) => Ok(card),
+      _ => Err(GetCardError{}),
+    }
+  }
+  
   /// Возвращает мутабельную ссылку на задачу в одной из карточек.
-  fn get_mut_task(&mut self, card_id: &i64, task_id: &i64) -> Result<&mut Task, GetMutTaskError> {
+  fn get_mut_task(&mut self, card_id: &i64, task_id: &i64)
+    -> Result<&mut Task, GetMutTaskError>
+  {
     let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
     if card_index.is_none() { return Err(GetMutTaskError{}); }
     let card_index: usize = card_index.unwrap();
     self[card_index].get_mut_task(task_id)
+  }
+  
+  /// Возвращает ссылку на задачу в одной из карточек.
+  fn get_task(&self, card_id: &i64, task_id: &i64) -> Result<&Task, GetTaskError> {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(GetTaskError{}); }
+    let card_index: usize = card_index.unwrap();
+    self[card_index].get_task(task_id)
   }
   
   /// Возвращает мутабельную ссылку на подзадачу.
@@ -248,6 +310,16 @@ impl Cards for Vec<Card> {
     if card_index.is_none() { return Err(GetMutSubtaskError{}); }
     let card_index: usize = card_index.unwrap();
     self[card_index].get_mut_subtask(task_id, subtask_id)
+  }
+  
+  /// Возвращает ссылку на подзадачу.
+  fn get_subtask(&self, card_id: &i64, task_id: &i64, subtask_id: &i64) 
+    -> Result<&Subtask, GetSubtaskError>
+  {
+    let card_index: Option<usize> = self.iter().position(|c| c.id == *card_id);
+    if card_index.is_none() { return Err(GetSubtaskError{}); }
+    let card_index: usize = card_index.unwrap();
+    self[card_index].get_subtask(task_id, subtask_id)
   }
   
   /// Удаляет и возвращает карточку.
