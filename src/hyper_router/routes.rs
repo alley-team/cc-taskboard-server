@@ -17,7 +17,7 @@ use hyper::http::Response;
 use serde_json::Value as JsonValue;
 
 use crate::hyper_router::resp;
-use crate::model::{extract, Board, BoardsShort, BoardHeader, Cards, Card, Task, Subtask, Tag, Timelines};
+use crate::model::{extract, Board, Card, Task, Subtask, Tag, Timelines, Workspace};
 use crate::psql_handler;
 use crate::sec::auth::{extract_creds, AdminCredentials, TokenAuth, SignInCredentials, SignUpCredentials};
 use crate::sec::tokens_vld;
@@ -767,7 +767,7 @@ pub async fn get_tags(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
   };
-  let subtask_id = match body.get("subtask_id") {
+  match body.get("subtask_id") {
     Some(subtask_id) => match subtask_id.as_i64() {
       Some(subtask_id) => match psql_handler::get_subtask_tags(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id
@@ -783,7 +783,7 @@ pub async fn get_tags(ws: Workspace, user_id: i64) -> Response<Body> {
       Ok(tags) => resp::from_code_and_msg(200, Some(&tags)),
       _ => resp::from_code_and_msg(500, Some("Не удалось получить теги задачи.")),
     },
-  };
+  }
 }
 
 /// Получает теги задачи/подзадачи.
@@ -823,7 +823,7 @@ pub async fn create_tag(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен тег.")),
   };
-  let subtask_id = match body.get("subtask_id") {
+  match body.get("subtask_id") {
     Some(subtask_id) => match subtask_id.as_i64() {
       Some(subtask_id) => match psql_handler::create_tag_at_subtask(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tag
@@ -839,7 +839,7 @@ pub async fn create_tag(ws: Workspace, user_id: i64) -> Response<Body> {
       Ok(id) => resp::from_code_and_msg(200, Some(&id.to_string())),
       _ => resp::from_code_and_msg(500, Some("Не удалось прикрепить тег к задаче.")),
     },
-  };
+  }
 }
 
 /// Изменяет данные аутентификации пользователя.

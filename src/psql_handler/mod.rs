@@ -125,7 +125,9 @@ pub async fn create_user(db: &Db, sign_up_credentials: &SignUpCredentials) -> MR
 /// Возвращает идентификатор пользователя по логину и паролю.
 pub async fn sign_in_creds_to_id(db: &Db, sign_in_credentials: &SignInCredentials) -> MResult<i64> {
   custom_error!{IncorrectPassword{} = "Неверный пароль!"};
-  let id_and_credentials = db.read("select id, user_creds from users where login = $1);", &[&sign_in_credentials.login]).await?;
+  let id_and_credentials = db.read(
+    "select id, user_creds from users where login = $1;", &[&sign_in_credentials.login]
+  ).await?;
   let user_credentials: UserCredentials = serde_json::from_str(id_and_credentials.get(1))?;
   match key_gen::check_pass(
     user_credentials.salt,
@@ -695,11 +697,11 @@ pub async fn get_subtask_tags(
   card_id: &i64,
   task_id: &i64,
   subtask_id: &i64,
-) -> MResult<()> {
+) -> MResult<String> {
   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  let tags = cards.get_subtask(card_id, task_id, subtask_id)?.tags;
-  serde_json::to_string(&tags)?
+  let tags = &cards.get_subtask(card_id, task_id, subtask_id)?.tags;
+  Ok(serde_json::to_string(&tags)?)
 }
 
 /// Получает теги задачи.
@@ -708,11 +710,11 @@ pub async fn get_task_tags(
   board_id: &i64,
   card_id: &i64,
   task_id: &i64,
-) -> MResult<()> {
+) -> MResult<String> {
   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
   let cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-  let tags = cards.get_task(card_id, task_id)?.tags;
-  serde_json::to_string(&tags)?
+  let tags = &cards.get_task(card_id, task_id)?.tags;
+  Ok(serde_json::to_string(&tags)?)
 }
 
 /// Создаёт тег у подзадачи.
@@ -723,21 +725,41 @@ pub async fn create_tag_at_subtask(
   task_id: &i64,
   subtask_id: &i64,
   tag: &Tag,
-) -> MResult<()> {
+) -> MResult<i64> {
   let subtask_tags_id_seq = 
     board_id.to_string() + "_" + 
     &card_id.to_string() + "_" + 
     &task_id.to_string() + "_" +
     &subtask_id.to_string() + "t";
   let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
-    ("select cards from boards where id = $1;", &[board_id]),
-    ("select val from id_seqs where id = $1;", &[&subtask_tags_id_seq]),
+    ("select cards from boards where id = $1;", vec![board_id]),
+    ("select val from id_seqs where id = $1;", vec![&subtask_tags_id_seq]),
   ];
   let results = db.read_mul(queries).await?;
-  let mut cards: Vec<Card> = serde_json::from_str(results.get(0))?;
-  let id: i64 = results.get(1);
-  cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags.push(tag.clone());
+  let mut cards: Vec<Card> = serde_json::from_str(results[0].get(0))?;
+  let mut id: i64 = results[1].get(0);
+  id = id + 1;
+  let mut tag = tag.clone();
+  tag.id = id;
+  cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags.push(tag);
   let cards = serde_json::to_string(&cards)?;
-  db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await?;
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("update boards set cards = $1 where id = $2;", vec![&cards, board_id]),
+    (
+      "insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;",
+      vec![&subtask_tags_id_seq, &id],
+    ),
+  ];
+  db.write_mul(queries).await?;
+  Ok(id)
 }
 
+pub async fn create_tag_at_task(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  tag: &Tag,
+) -> MResult<i64> {
+  unimplemented!();
+}
