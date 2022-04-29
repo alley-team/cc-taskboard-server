@@ -754,6 +754,7 @@ pub async fn create_tag_at_subtask(
   Ok(id)
 }
 
+/// Создаёт тег у задачи.
 pub async fn create_tag_at_task(
   db: &Db,
   board_id: &i64,
@@ -761,5 +762,29 @@ pub async fn create_tag_at_task(
   task_id: &i64,
   tag: &Tag,
 ) -> MResult<i64> {
-  unimplemented!();
+  let task_tags_id_seq = 
+    board_id.to_string() + "_" + 
+    &card_id.to_string() + "_" + 
+    &task_id.to_string() + "t";
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("select cards from boards where id = $1;", vec![board_id]),
+    ("select val from id_seqs where id = $1;", vec![&task_tags_id_seq]),
+  ];
+  let results = db.read_mul(queries).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(results[0].get(0))?;
+  let mut id: i64 = results[1].get(0);
+  id = id + 1;
+  let mut tag = tag.clone();
+  tag.id = id;
+  cards.get_mut_task(card_id, task_id)?.tags.push(tag);
+  let cards = serde_json::to_string(&cards)?;
+  let queries: Vec<(&str, Vec<&(dyn ToSql + Sync)>)> = vec![
+    ("update boards set cards = $1 where id = $2;", vec![&cards, board_id]),
+    (
+      "insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;",
+      vec![&task_tags_id_seq, &id],
+    ),
+  ];
+  db.write_mul(queries).await?;
+  Ok(id)
 }
