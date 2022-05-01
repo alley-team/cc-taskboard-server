@@ -50,6 +50,7 @@ pub async fn router(req: Request<Body>, db: Db, admin_key: String, _addr: Socket
         (&Method::PATCH,   "/subtask/time") => routes::patch_subtask_time (ws, user_id)        .await,
         (&Method::GET,     "/tags")         => routes::get_tags           (ws, user_id)        .await,
         (&Method::PUT,     "/tag")          => routes::create_tag         (ws, user_id)        .await,
+        (&Method::PATCH,   "/tag")          => routes::patch_tag          (ws, user_id)        .await,
         
         (&Method::PATCH,   "/user/creds")   => routes::patch_user_creds   (ws, user_id)        .await,
         (&Method::PATCH,   "/user/billing") => routes::patch_user_billing (ws, user_id)        .await,

@@ -788,3 +788,52 @@ pub async fn create_tag_at_task(
   db.write_mul(queries).await?;
   Ok(id)
 }
+
+/// Редактирует тег в подзадаче.
+pub async fn patch_tag_at_subtask(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  subtask_id: &i64,
+  tag_id: &i64,
+  patch: &JsonValue,
+) -> MResult<()> {
+  custom_error!(TNF{} = "Не удалось найти тег по идентификатору.");
+  let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
+  let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
+  let mut tags = cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags.clone();
+  let mut patched: bool = false;
+  for i in 0..tags.len() {
+    if tags[i].id == *tag_id {
+      patched = true;
+      if let Some(title) = patch.get("title") {
+        tags[i].title = String::from(title.as_str().ok_or(NFO{})?);
+      };
+      if let Some(background_color) = patch.get("background_color") {
+        tags[i].background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+      };
+      if let Some(text_color) = patch.get("text_color") {
+        tags[i].text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+      };
+    };
+  };
+  if patched {
+    cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags = tags.to_vec();
+    let cards = serde_json::to_string(&cards)?;
+    db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
+  } else {
+    Err(Box::new(TNF{}))
+  }
+}
+
+pub async fn patch_tag_at_task(
+  db: &Db,
+  board_id: &i64,
+  card_id: &i64,
+  task_id: &i64,
+  tag_id: &i64,
+  patch: &JsonValue,
+) -> MResult<()> {
+  unimplemented!();
+}
