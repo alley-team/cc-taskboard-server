@@ -3,7 +3,7 @@
 //! У всех методов должны проверяться права человека на доску путём просмотра списка shared_with:
 //!
 //! ```rust
-//! if psql_handler::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
+//! if core::in_shared_with(&ws.db, &token_auth.id, &board_id).await.is_err() {
 //!   return resp::from_code_and_msg(500, Some("Пользователь не имеет доступа к доске."));
 //! };
 //! ```
@@ -16,9 +16,9 @@ use hyper::Body;
 use hyper::http::Response;
 use serde_json::Value as JsonValue;
 
+use crate::core;
 use crate::hyper_router::resp;
 use crate::model::{extract, Board, Card, Task, Subtask, Tag, Timelines, Workspace};
-use crate::psql_handler;
 use crate::sec::auth::{extract_creds, AdminCredentials, TokenAuth, SignInCredentials, SignUpCredentials};
 use crate::sec::tokens_vld;
 
@@ -34,7 +34,7 @@ pub async fn db_setup(ws: Workspace, admin_key: String) -> Response<Body> {
     _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
   };
   let status_code = match key == admin_key {
-    true => match psql_handler::db_setup(&ws.db).await {
+    true => match core::db_setup(&ws.db).await {
       Ok(_) => 200,
       _ => 500,
     },
@@ -52,7 +52,7 @@ pub async fn get_new_cc_key(ws: Workspace, admin_key: String) -> Response<Body> 
   if key != admin_key {
     return resp::from_code_and_msg(401, None);
   }
-  match psql_handler::register_new_cc_key(&ws.db).await {
+  match core::register_new_cc_key(&ws.db).await {
     Ok(key) => resp::from_code_and_msg(200, Some(&key)),
     _ => resp::from_code_and_msg(500, None),
   }
@@ -66,21 +66,21 @@ pub async fn sign_up(ws: Workspace) -> Response<Body> {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
   };
-  let cc_key_id = match psql_handler::check_cc_key(&ws.db, &su_creds.cc_key).await {
+  let cc_key_id = match core::check_cc_key(&ws.db, &su_creds.cc_key).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(401, Some("Ключ регистрации не найден.")),
   };
   if su_creds.pass.len() < 8 {
     return resp::from_code_and_msg(400, Some("Пароль слишком короткий."));
   };
-  if let Err(_) = psql_handler::remove_cc_key(&ws.db, &cc_key_id).await {
+  if let Err(_) = core::remove_cc_key(&ws.db, &cc_key_id).await {
     return resp::from_code_and_msg(401, Some("Ключ регистрации не удалось удалить."));
   };
-  let id = match psql_handler::create_user(&ws.db, &su_creds).await {
+  let id = match core::create_user(&ws.db, &su_creds).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(500, Some("Не удалось создать пользователя.")),
   };
-  match psql_handler::get_new_token(&ws.db, &id).await {
+  match core::get_new_token(&ws.db, &id).await {
     Ok(token_auth) => resp::from_code_and_msg(200, Some(&serde_json::to_string(&token_auth).unwrap())),
     _ => resp::from_code_and_msg(500, Some("Не удалось создать токен.")),
   }
@@ -92,11 +92,11 @@ pub async fn sign_in(ws: Workspace) -> Response<Body> {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
   };
-  let id = match psql_handler::sign_in_creds_to_id(&ws.db, &si_creds).await {
+  let id = match core::sign_in_creds_to_id(&ws.db, &si_creds).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(401, None),
   };
-  let token_auth = match psql_handler::get_new_token(&ws.db, &id).await {
+  let token_auth = match core::get_new_token(&ws.db, &id).await {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(500, None),
   };
@@ -121,7 +121,7 @@ pub async fn auth_by_token(ws: &Workspace) -> Result<(i64, bool), (u16, String)>
 
 /// Отправляет список доступных для пользователя досок.
 pub async fn list_boards(ws: Workspace, user_id: i64) -> Response<Body> {
-  match psql_handler::list_boards(&ws.db, &user_id).await {
+  match core::list_boards(&ws.db, &user_id).await {
     Ok(list) => resp::from_code_and_msg(200, Some(&list)),
     _ => resp::from_code_and_msg(500, Some("Не удалось получить список досок.")),
   }
@@ -130,7 +130,7 @@ pub async fn list_boards(ws: Workspace, user_id: i64) -> Response<Body> {
 /// Создаёт доску для пользователя.
 pub async fn create_board(ws: Workspace, user_id: i64, billed: bool) -> Response<Body> {
   if !billed {
-    let boards_n = match psql_handler::count_boards(&ws.db, &user_id).await {
+    let boards_n = match core::count_boards(&ws.db, &user_id).await {
       Ok(v) => v,
       _ => return resp::from_code_and_msg(500, Some("Невозможно сосчитать число имеющихся досок у пользователя.")),
     };
@@ -142,7 +142,7 @@ pub async fn create_board(ws: Workspace, user_id: i64, billed: bool) -> Response
     Ok(v) => v,
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
   };
-  match psql_handler::create_board(&ws.db, &user_id, &board).await {
+  match core::create_board(&ws.db, &user_id, &board).await {
     Ok(id) => resp::from_code_and_msg(200, Some(&id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось создать доску.")),
   }
@@ -157,10 +157,10 @@ pub async fn get_board(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
   };
-  if let Err(_) = psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await {
+  if let Err(_) = core::in_shared_with(&ws.db, &user_id, &board_id).await {
     return resp::from_code_and_msg(401, Some("Данная доска вам недоступна."));
   };
-  match psql_handler::get_board(&ws.db, &board_id).await {
+  match core::get_board(&ws.db, &board_id).await {
     Ok(board) => resp::from_code_and_msg(200, Some(&board)),
      _ => resp::from_code_and_msg(500, None),
   }
@@ -183,7 +183,7 @@ pub async fn patch_board(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  match psql_handler::apply_patch_on_board(&ws.db, &user_id, &board_id, &patch).await {
+  match core::apply_patch_on_board(&ws.db, &user_id, &board_id, &patch).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.")),
   }
@@ -202,7 +202,7 @@ pub async fn delete_board(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  match psql_handler::remove_board(&ws.db, &user_id, &board_id).await {
+  match core::remove_board(&ws.db, &user_id, &board_id).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось удалить доску.")),
   }
@@ -221,7 +221,7 @@ pub async fn create_card(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Пользователь не имеет доступа к доске."));
   };
   let card: Card = match body.get("card") {
@@ -231,7 +231,7 @@ pub async fn create_card(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получена карточка.")),
   };
-  match psql_handler::insert_card(&ws.db, &user_id, &board_id, card).await {
+  match core::insert_card(&ws.db, &user_id, &board_id, card).await {
     Ok(card_id) => resp::from_code_and_msg(200, Some(&card_id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось добавить карточку.")),
   }
@@ -252,7 +252,7 @@ pub async fn patch_card(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match patch.get("card_id") {
@@ -262,7 +262,7 @@ pub async fn patch_card(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
   };
-  match psql_handler::apply_patch_on_card(&ws.db, &board_id, &card_id, &patch).await {
+  match core::apply_patch_on_card(&ws.db, &board_id, &card_id, &patch).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к доске.")),
   }
@@ -281,7 +281,7 @@ pub async fn delete_card(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -291,7 +291,7 @@ pub async fn delete_card(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
   };
-  match psql_handler::remove_card(&ws.db, &board_id, &card_id).await {
+  match core::remove_card(&ws.db, &board_id, &card_id).await {
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить карточку.")),
     _ => resp::from_code_and_msg(200, None),
   }
@@ -310,7 +310,7 @@ pub async fn create_task(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -327,7 +327,7 @@ pub async fn create_task(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получена задача.")),
   };
-  match psql_handler::insert_task(&ws.db, &user_id, &board_id, &card_id, task).await {
+  match core::insert_task(&ws.db, &user_id, &board_id, &card_id, task).await {
     Ok(task_id) => resp::from_code_and_msg(200, Some(&task_id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось добавить задачу.")),
   }
@@ -352,7 +352,7 @@ pub async fn patch_task(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match patch.get("card_id") {
@@ -369,7 +369,7 @@ pub async fn patch_task(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
   };
-  match psql_handler::apply_patch_on_task(&ws.db, &board_id, &card_id, &task_id, &patch).await {
+  match core::apply_patch_on_task(&ws.db, &board_id, &card_id, &task_id, &patch).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось применить патч к задаче.")),
   }
@@ -388,7 +388,7 @@ pub async fn delete_task(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -405,7 +405,7 @@ pub async fn delete_task(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
   };
-  match psql_handler::remove_task(&ws.db, &board_id, &card_id, &task_id).await {
+  match core::remove_task(&ws.db, &board_id, &card_id, &task_id).await {
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить задачу.")),
     _ => resp::from_code_and_msg(200, None),
   }
@@ -424,7 +424,7 @@ pub async fn patch_task_time(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -448,7 +448,7 @@ pub async fn patch_task_time(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получены временные рамки.")),
   };
-  match psql_handler::set_timelines_on_task(&ws.db, &board_id, &card_id, &task_id, &timelines).await {
+  match core::set_timelines_on_task(&ws.db, &board_id, &card_id, &task_id, &timelines).await {
     Ok(_) => resp::from_code_and_msg(200, None),
     _ => resp::from_code_and_msg(500, Some("Не удалось присвоить временные рамки для задачи.")),
   }
@@ -467,7 +467,7 @@ pub async fn create_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -491,7 +491,7 @@ pub async fn create_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получена подзадача.")),
   };
-  match psql_handler::insert_subtask(&ws.db, &user_id, &board_id, &card_id, &task_id, subtask).await {
+  match core::insert_subtask(&ws.db, &user_id, &board_id, &card_id, &task_id, subtask).await {
     Ok(subtask_id) => resp::from_code_and_msg(200, Some(&subtask_id.to_string())),
     _ => resp::from_code_and_msg(500, Some("Не удалось добавить подзадачу.")),
   }
@@ -515,7 +515,7 @@ pub async fn patch_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match patch.get("card_id") {
@@ -539,7 +539,7 @@ pub async fn patch_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен subtask_id.")),
   };
-  match psql_handler::apply_patch_on_subtask(
+  match core::apply_patch_on_subtask(
     &ws.db, &board_id, &card_id, &task_id, &subtask_id, &patch
   ).await {
     Ok(_) => resp::from_code_and_msg(200, None),
@@ -560,7 +560,7 @@ pub async fn delete_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -584,7 +584,7 @@ pub async fn delete_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен subtask_id.")),
   };
-  match psql_handler::remove_subtask(&ws.db, &board_id, &card_id, &task_id, &subtask_id).await {
+  match core::remove_subtask(&ws.db, &board_id, &card_id, &task_id, &subtask_id).await {
     Err(_) => resp::from_code_and_msg(500, Some("Не удалось удалить подзадачу.")),
     _ => resp::from_code_and_msg(200, None),
   }
@@ -603,7 +603,7 @@ pub async fn patch_subtask_time(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -634,7 +634,7 @@ pub async fn patch_subtask_time(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получены временные рамки.")),
   };
-  match psql_handler::set_timelines_on_subtask(
+  match core::set_timelines_on_subtask(
     &ws.db, &board_id, &card_id, &task_id, &subtask_id, &timelines
   ).await {
     Ok(_) => resp::from_code_and_msg(200, None),
@@ -655,7 +655,7 @@ pub async fn get_tags(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -674,7 +674,7 @@ pub async fn get_tags(ws: Workspace, user_id: i64) -> Response<Body> {
   };
   match body.get("subtask_id") {
     Some(subtask_id) => match subtask_id.as_i64() {
-      Some(subtask_id) => match psql_handler::get_subtask_tags(
+      Some(subtask_id) => match core::get_subtask_tags(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id
       ).await {
         Ok(tags) => resp::from_code_and_msg(200, Some(&tags)),
@@ -682,7 +682,7 @@ pub async fn get_tags(ws: Workspace, user_id: i64) -> Response<Body> {
       },
       _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
-    _ => match psql_handler::get_task_tags(
+    _ => match core::get_task_tags(
       &ws.db, &board_id, &card_id, &task_id
     ).await {
       Ok(tags) => resp::from_code_and_msg(200, Some(&tags)),
@@ -704,7 +704,7 @@ pub async fn create_tag(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -730,7 +730,7 @@ pub async fn create_tag(ws: Workspace, user_id: i64) -> Response<Body> {
   };
   match body.get("subtask_id") {
     Some(subtask_id) => match subtask_id.as_i64() {
-      Some(subtask_id) => match psql_handler::create_tag_at_subtask(
+      Some(subtask_id) => match core::create_tag_at_subtask(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tag
       ).await {
         Ok(id) => resp::from_code_and_msg(200, Some(&id.to_string())),
@@ -738,7 +738,7 @@ pub async fn create_tag(ws: Workspace, user_id: i64) -> Response<Body> {
       },
       _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
-    _ => match psql_handler::create_tag_at_task(
+    _ => match core::create_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag
     ).await {
       Ok(id) => resp::from_code_and_msg(200, Some(&id.to_string())),
@@ -760,7 +760,7 @@ pub async fn patch_tag(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match patch.get("card_id") {
@@ -786,7 +786,7 @@ pub async fn patch_tag(ws: Workspace, user_id: i64) -> Response<Body> {
   };
   match patch.get("subtask_id") {
     Some(subtask_id) => match subtask_id.as_i64() {
-      Some(subtask_id) => match psql_handler::patch_tag_at_subtask(
+      Some(subtask_id) => match core::patch_tag_at_subtask(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tag_id, &patch
       ).await {
         Ok(_) => resp::from_code_and_msg(200, None),
@@ -794,7 +794,7 @@ pub async fn patch_tag(ws: Workspace, user_id: i64) -> Response<Body> {
       },
       _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
-    _ => match psql_handler::patch_tag_at_task(
+    _ => match core::patch_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag_id, &patch
     ).await {
       Ok(_) => resp::from_code_and_msg(200, None),
@@ -816,7 +816,7 @@ pub async fn delete_tag(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
   };
-  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
   };
   let card_id = match body.get("card_id") {
@@ -842,7 +842,7 @@ pub async fn delete_tag(ws: Workspace, user_id: i64) -> Response<Body> {
   };
   match body.get("subtask_id") {
     Some(subtask_id) => match subtask_id.as_i64() {
-      Some(subtask_id) => match psql_handler::delete_tag_at_subtask(
+      Some(subtask_id) => match core::delete_tag_at_subtask(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tag_id
       ).await {
         Ok(_) => resp::from_code_and_msg(200, None),
@@ -850,7 +850,7 @@ pub async fn delete_tag(ws: Workspace, user_id: i64) -> Response<Body> {
       },
       _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
-    _ => match psql_handler::delete_tag_at_task(
+    _ => match core::delete_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag_id
     ).await {
       Ok(_) => resp::from_code_and_msg(200, None),

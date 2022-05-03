@@ -2,7 +2,8 @@
 
 use chrono::{Utc, Duration};
 
-use crate::psql_handler::{Db, get_tokens_and_billing, write_tokens};
+use crate::core::{get_tokens_and_billing, write_tokens};
+use crate::psql_handler::Db;
 use crate::sec::auth::TokenAuth;
 
 /// 1. Проверяет все токены пользователя на срок годности, проверяет наличие текущего токена и возвращает true, если пользователь определён.
