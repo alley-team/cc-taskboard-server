@@ -884,7 +884,7 @@ pub async fn patch_tag(ws: Workspace, user_id: i64) -> Response<Body> {
       Some(subtask_id) => match psql_handler::patch_tag_at_subtask(
         &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tag_id, &patch
       ).await {
-        Ok(id) => resp::from_code_and_msg(200, None),
+        Ok(_) => resp::from_code_and_msg(200, None),
         _ => resp::from_code_and_msg(500, Some("Не удалось изменить тег.")),
       },
       _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
@@ -892,8 +892,64 @@ pub async fn patch_tag(ws: Workspace, user_id: i64) -> Response<Body> {
     _ => match psql_handler::patch_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag_id, &patch
     ).await {
-      Ok(id) => resp::from_code_and_msg(200, None),
+      Ok(_) => resp::from_code_and_msg(200, None),
       _ => resp::from_code_and_msg(500, Some("Не удалось изменить тег.")),
+    },
+  }
+}
+
+/// Удаляет тег из подзадачи/задачи.
+pub async fn delete_tag(ws: Workspace, user_id: i64) -> Response<Body> {
+  let body = match extract::<JsonValue>(ws.req).await {
+    Ok(v) => v,
+    _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
+  };
+  let board_id = match body.get("board_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
+  };
+  if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
+    return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
+  };
+  let card_id = match body.get("card_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("card_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
+  };
+  let task_id = match body.get("task_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("task_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
+  };
+  let tag_id = match body.get("tag_id") {
+    Some(v) => match v.as_i64() {
+      Some(v) => v,
+      _ => return resp::from_code_and_msg(400, Some("tag_id должен быть числом.")),
+    },
+    _ => return resp::from_code_and_msg(400, Some("Не получен tag_id.")),
+  };
+  match body.get("subtask_id") {
+    Some(subtask_id) => match subtask_id.as_i64() {
+      Some(subtask_id) => match psql_handler::delete_tag_at_subtask(
+        &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tag_id
+      ).await {
+        Ok(_) => resp::from_code_and_msg(200, None),
+        _ => resp::from_code_and_msg(500, Some("Не удалось удалить тег.")),
+      },
+      _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
+    },
+    _ => match psql_handler::delete_tag_at_task(
+      &ws.db, &board_id, &card_id, &task_id, &tag_id
+    ).await {
+      Ok(_) => resp::from_code_and_msg(200, None),
+      _ => resp::from_code_and_msg(500, Some("Не удалось удалить тег.")),
     },
   }
 }
