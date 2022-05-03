@@ -10,6 +10,7 @@ use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 
 use crate::model::{Board, BoardsShort, BoardHeader, Cards, Card, Task, Subtask, Tag, Timelines};
 use crate::sec::auth::{Token, TokenAuth, SignInCredentials, SignUpCredentials, UserCredentials, AccountPlanDetails};
+use crate::sec::color_vld::validate_color;
 use crate::sec::key_gen;
 
 type MResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -194,22 +195,11 @@ pub async fn list_boards(db: &Db, id: &i64) -> MResult<String> {
 
 /// Создаёт доску.
 pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> {
-  custom_error!{IncorrectBoard
-    EmptyTitle = "У доски пустой заголовок.",
-    IncompatibleColorLen = "Цвет не представлен в виде #RRGGBB.",
-    IncompatibleColorBeginning = "Цвет не начинается с #."
-  };
-  if board.header.title.is_empty() { return Err(Box::new(IncorrectBoard::EmptyTitle)); };
-  if board.background_color.bytes().count() != 7 || 
-     board.header.header_background_color.bytes().count() != 7 ||
-     board.header.header_text_color.bytes().count() != 7 {
-    return Err(Box::new(IncorrectBoard::IncompatibleColorLen));
-  };
-  if board.background_color.chars().nth(0) != Some('#') ||
-     board.header.header_background_color.chars().nth(0) != Some('#') ||
-     board.header.header_text_color.chars().nth(0) != Some('#') {
-    return Err(Box::new(IncorrectBoard::IncompatibleColorBeginning));
-  };
+  custom_error!{EmptyTitle{} = "У доски пустой заголовок."};
+  if board.header.title.is_empty() { return Err(Box::new(EmptyTitle{})); };
+  validate_color(&board.background_color)?;
+  validate_color(&board.header.header_background_color)?;
+  validate_color(&board.header.header_text_color)?;
   let data = db.read_mul(vec![
     ("select nextval(pg_get_serial_sequence('boards', 'id'));", vec![]),
     ("select shared_boards from users where id = $1;", vec![author])
@@ -253,26 +243,36 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch:
   if *user_id != author_id { return Err(Box::new(NTA{})); };
   let header: String = author_id_and_header.get(1);
   let mut header: BoardHeader = serde_json::from_str(&header)?;
+  let mut header_patched: bool = false;
   if let Some(title) = patch.get("title") {
     let title = String::from(title.as_str().ok_or(NFO{})?);
+    validate_color(&title)?;
     header.title = title;
+    header_patched = true;
   };
   if let Some(background_color) = patch.get("background_color") {
     let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    validate_color(&background_color)?;
     let r: Vec<&(dyn ToSql + Sync)> = vec![&background_color, board_id];
     db.write("update boards set background_color = $1 where id = $2;", &r).await?;
   };
   if let Some(header_background_color) = patch.get("header_background_color") {
     let header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);
+    validate_color(&header_background_color)?;
     header.header_background_color = header_background_color;
+    header_patched = true;
   };
   if let Some(header_text_color) = patch.get("header_text_color") {
     let header_text_color = String::from(header_text_color.as_str().ok_or(NFO{})?);
+    validate_color(&header_text_color)?;
     header.header_text_color = header_text_color;
+    header_patched = true;
   };
-  let header = serde_json::to_string(&header)?;
-  let r: Vec<&(dyn ToSql + Sync)> = vec![&header, board_id];
-  db.write("update boards set header = $1 where id = $2;", &r).await?;
+  if header_patched {
+    let header = serde_json::to_string(&header)?;
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&header, board_id];
+    db.write("update boards set header = $1 where id = $2;", &r).await?;
+  }
   Ok(())
 }
 
@@ -363,6 +363,9 @@ pub async fn in_shared_with(db: &Db, user_id: &i64, board_id: &i64) -> MResult<(
 ///
 /// Функция не возвращает идентификаторы задач/подзадач, только id карточки.
 pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card) -> MResult<i64> {
+  validate_color(&card.background_color)?;
+  validate_color(&card.header_text_color)?;
+  validate_color(&card.header_background_color)?;
   let cards_id_seq = board_id.to_string();
   let mut next_card_id: i64 = match db.read("select val from id_seqs where id = $1;", &[&cards_id_seq]).await {
     Ok(res) => res.get(0),
@@ -380,6 +383,10 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
   let shared_with: HashSet<i64> = shared_with.into_iter().collect();
   let mut id_seqs_queries_data: Vec<(String, i64)> = Vec::new();
   for i in 0..card.tasks.len() {
+    for j in 0..card.tasks[i].tags.len() {
+      validate_color(&card.tasks[i].tags[j].background_color)?;
+      validate_color(&card.tasks[i].tags[j].text_color)?;
+    };
     card.tasks[i].id = next_task_id;
     card.tasks[i].author = *user_id;
     let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
@@ -389,6 +396,10 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
     card.tasks[i].executors = executors;
     let mut next_subtask_id: i64 = 1;
     for j in 0..card.tasks[i].subtasks.len() {
+      for k in 0..card.tasks[i].subtasks[j].tags.len() {
+        validate_color(&card.tasks[i].subtasks[j].tags[k].background_color)?;
+        validate_color(&card.tasks[i].subtasks[j].tags[k].text_color)?;
+      };
       card.tasks[i].subtasks[j].id = next_subtask_id;
       card.tasks[i].subtasks[j].author = *user_id;
       next_subtask_id += 1;
@@ -432,13 +443,19 @@ pub async fn apply_patch_on_card(db: &Db, board_id: &i64, card_id: &i64, patch: 
     card.title = String::from(title.as_str().ok_or(NFO{})?);
   };
   if let Some(background_color) = patch.get("background_color") {
-    card.background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+    validate_color(&background_color)?;
+    card.background_color = background_color;
   };
   if let Some(header_text_color) = patch.get("header_text_color") {
-    card.header_text_color = String::from(header_text_color.as_str().ok_or(NFO{})?);
+    let header_text_color = String::from(header_text_color.as_str().ok_or(NFO{})?);
+    validate_color(&header_text_color)?;
+    card.header_text_color = header_text_color;
   };
   if let Some(header_background_color) = patch.get("header_background_color") {
-    card.header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);
+    let header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);
+    validate_color(&header_background_color)?;
+    card.header_background_color = header_background_color;
   };
   let cards = serde_json::to_string(&cards)?;
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
@@ -462,6 +479,10 @@ pub async fn remove_card(db: &Db, board_id: &i64, card_id: &i64) -> MResult<()> 
 pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, mut task: Task) 
   -> MResult<i64> 
 {
+  for i in 0..task.tags.len() {
+    validate_color(&task.tags[i].background_color)?;
+    validate_color(&task.tags[i].text_color)?;
+  };
   let tasks_id_seq = board_id.to_string() + "_" + &card_id.to_string();
   let data = db.read("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
@@ -481,6 +502,10 @@ pub async fn insert_task(db: &Db, user_id: &i64, board_id: &i64, card_id: &i64, 
   let subtasks_id_seq = tasks_id_seq.clone() + "_" + &next_task_id.to_string();
   let mut next_subtask_id: i64 = 1;
   for i in 0..task.subtasks.len() {
+    for j in 0..task.subtasks[i].tags.len() {
+      validate_color(&task.subtasks[i].tags[j].background_color)?;
+      validate_color(&task.subtasks[i].tags[j].text_color)?;
+    };
     task.subtasks[i].id = next_subtask_id;
     task.subtasks[i].author = *user_id;
     next_subtask_id += 1;
@@ -548,21 +573,6 @@ pub async fn remove_task(db: &Db, board_id: &i64, card_id: &i64, task_id: &i64)
   db.write_mul(queries).await
 }
 
-// Устанавливает метки на задачу.
-// pub async fn set_tags_on_task(
-//   db: &Db,
-//   board_id: &i64,
-//   card_id: &i64,
-//   task_id: &i64,
-//   tags: &Vec<Tag>,
-// ) -> MResult<()> {
-//   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
-//   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-//   cards.get_mut_task(card_id, task_id)?.tags = tags.to_vec();
-//   let cards = serde_json::to_string(&cards)?;
-//   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
-// }
-
 /// Устанавливает временные рамки на задачу.
 pub async fn set_timelines_on_task(
   db: &Db,
@@ -587,6 +597,10 @@ pub async fn insert_subtask(
   task_id: &i64,
   mut subtask: Subtask,
 ) -> MResult<i64> {
+  for i in 0..subtask.tags.len() {
+    validate_color(&subtask.tags[i].background_color)?;
+    validate_color(&subtask.tags[i].text_color)?;
+  };
   let subtasks_id_seq = board_id.to_string() + "_" + &card_id.to_string() + "_" + &task_id.to_string();
   let data = db.read("select cards, shared_with from boards where id = $1;", &[board_id]).await?;
   let mut cards: Vec<Card> = serde_json::from_str(data.get(0))?;
@@ -659,22 +673,6 @@ pub async fn remove_subtask(
   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
 }
 
-// Устанавливает метки на подзадачу.
-// pub async fn set_tags_on_subtask(
-//   db: &Db,
-//   board_id: &i64,
-//   card_id: &i64,
-//   task_id: &i64,
-//   subtask_id: &i64,
-//   tags: &Vec<Tag>,
-// ) -> MResult<()> {
-//   let cards = db.read("select cards from boards where id = $1;", &[board_id]).await?;
-//   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
-//   cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags = tags.to_vec();
-//   let cards = serde_json::to_string(&cards)?;
-//   db.write("update boards set cards = $1 where id = $2;", &[&cards, board_id]).await
-// }
-
 /// Устанавливает временные рамки на подзадачу.
 pub async fn set_timelines_on_subtask(
   db: &Db,
@@ -727,6 +725,8 @@ pub async fn create_tag_at_subtask(
   subtask_id: &i64,
   tag: &Tag,
 ) -> MResult<i64> {
+  validate_color(&tag.text_color)?;
+  validate_color(&tag.background_color)?;
   let subtask_tags_id_seq = 
     board_id.to_string() + "_" + 
     &card_id.to_string() + "_" + 
@@ -766,6 +766,8 @@ pub async fn create_tag_at_task(
   task_id: &i64,
   tag: &Tag,
 ) -> MResult<i64> {
+  validate_color(&tag.text_color)?;
+  validate_color(&tag.background_color)?;
   let task_tags_id_seq = 
     board_id.to_string() + "_" + 
     &card_id.to_string() + "_" + 
@@ -817,11 +819,16 @@ pub async fn patch_tag_at_subtask(
         tags[i].title = String::from(title.as_str().ok_or(NFO{})?);
       };
       if let Some(background_color) = patch.get("background_color") {
-        tags[i].background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+        let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+        validate_color(&background_color)?;
+        tags[i].background_color = background_color;
       };
       if let Some(text_color) = patch.get("text_color") {
-        tags[i].text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+        let text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+        validate_color(&text_color)?;
+        tags[i].text_color = text_color;
       };
+      break;
     };
   };
   if patched {
@@ -853,11 +860,16 @@ pub async fn patch_tag_at_task(
         tags[i].title = String::from(title.as_str().ok_or(NFO{})?);
       };
       if let Some(background_color) = patch.get("background_color") {
-        tags[i].background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+        let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
+        validate_color(&background_color)?;
+        tags[i].background_color = background_color;
       };
       if let Some(text_color) = patch.get("text_color") {
-        tags[i].text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+        let text_color = String::from(text_color.as_str().ok_or(NFO{})?);
+        validate_color(&text_color)?;
+        tags[i].text_color = text_color;
       };
+      break;
     };
   };
   if patched {

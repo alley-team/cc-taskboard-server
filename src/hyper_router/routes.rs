@@ -411,49 +411,6 @@ pub async fn delete_task(ws: Workspace, user_id: i64) -> Response<Body> {
   }
 }
 
-/// Изменяет метки задачи.
-// pub async fn patch_task_tags(ws: Workspace, user_id: i64) -> Response<Body> {
-//   let body = match extract::<JsonValue>(ws.req).await {
-//     Ok(v) => v,
-//     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
-//   };
-//   let board_id = match body.get("board_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
-//   };
-//   if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
-//     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
-//   };
-//   let card_id = match body.get("card_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("card_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
-//   };
-//   let task_id = match body.get("task_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("task_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
-//   };
-//   let tags: Vec<Tag> = match body.get("tags") {
-//     Some(tags) => match serde_json::from_value(tags.clone()) {
-//       Ok(tags) => tags,
-//       _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать метки.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получены метки.")),
-//   };
-//   match psql_handler::set_tags_on_task(&ws.db, &board_id, &card_id, &task_id, &tags).await {
-//     Ok(_) => resp::from_code_and_msg(200, None),
-//     _ => resp::from_code_and_msg(500, Some("Не удалось присвоить метки для задачи.")),
-//   }
-// }
-
 /// Изменяет временные рамки задачи.
 pub async fn patch_task_time(ws: Workspace, user_id: i64) -> Response<Body> {
   let body = match extract::<JsonValue>(ws.req).await {
@@ -632,58 +589,6 @@ pub async fn delete_subtask(ws: Workspace, user_id: i64) -> Response<Body> {
     _ => resp::from_code_and_msg(200, None),
   }
 }
-
-/// Изменяет метки подзадачи.
-// pub async fn patch_subtask_tags(ws: Workspace, user_id: i64) -> Response<Body> {
-//   let body = match extract::<JsonValue>(ws.req).await {
-//     Ok(v) => v,
-//     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
-//   };
-//   let board_id = match body.get("board_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("board_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен board_id.")),
-//   };
-//   if psql_handler::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
-//     return resp::from_code_and_msg(500, Some("Не удалось проверить права пользователя на доску."));
-//   };
-//   let card_id = match body.get("card_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("card_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен card_id.")),
-//   };
-//   let task_id = match body.get("task_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("task_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен task_id.")),
-//   };
-//   let subtask_id = match body.get("subtask_id") {
-//     Some(v) => match v.as_i64() {
-//       Some(v) => v,
-//       _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получен subtask_id.")),
-//   };
-//   let tags: Vec<Tag> = match body.get("tags") {
-//     Some(tags) => match serde_json::from_value(tags.clone()) {
-//       Ok(tags) => tags,
-//       _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать метки.")),
-//     },
-//     _ => return resp::from_code_and_msg(400, Some("Не получены метки.")),
-//   };
-//   match psql_handler::set_tags_on_subtask(
-//     &ws.db, &board_id, &card_id, &task_id, &subtask_id, &tags
-//   ).await {
-//     Ok(_) => resp::from_code_and_msg(200, None),
-//     _ => resp::from_code_and_msg(500, Some("Не удалось присвоить метки для подзадачи.")),
-//   }
-// }
 
 /// Изменяет временные рамки подзадачи.
 pub async fn patch_subtask_time(ws: Workspace, user_id: i64) -> Response<Body> {

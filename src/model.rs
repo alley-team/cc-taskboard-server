@@ -94,6 +94,77 @@ pub struct Task {
   pub timelines: Timelines,
 }
 
+/// Карточка.
+#[derive(Deserialize, Serialize)]
+pub struct Card {
+  /// Уникальный идентификатор карточки в пределах доски.
+  pub id: i64,
+  /// Автор карточки.
+  pub author: i64,
+  /// Название карточки.
+  pub title: String,
+  /// Список задач.
+  pub tasks: Vec<Task>,
+  // Цвет текста заголовка.
+  pub header_text_color: String,
+  /// Цвет фона заголовка.
+  pub header_background_color: String,
+  /// Цвет фона карточки.
+  pub background_color: String,
+}
+
+/// Краткая информация о досках пользователя.
+#[derive(Deserialize, Serialize)]
+pub struct BoardsShort {
+  /// Идентификатор доски.
+  pub id: i64,
+  /// Название доски.
+  pub title: String,
+  /// Цвет текста заголовка.
+  pub header_text_color: String,
+  /// Цвет фона заголовка.
+  pub header_background_color: String,
+}
+
+/// Заголовок доски.
+#[derive(Deserialize, Serialize)]
+pub struct BoardHeader {
+  /// Название доски.
+  pub title: String,
+  /// Цвет текста заголовка.
+  pub header_text_color: String,
+  /// Цвет фона заголовка.
+  pub header_background_color: String,
+}
+
+/// Доска.
+#[derive(Deserialize, Serialize)]
+pub struct Board {
+  /// Уникальный идентификатор доски в базе данных.
+  pub id: i64,
+  /// Заголовок доски.
+  pub header: BoardHeader,
+  /// Автор доски.
+  pub author: i64,
+  /// Список пользователей, у которых есть доступ к карточке.
+  pub shared_with: Vec<i64>,
+  /// Список карточек.
+  pub cards: Vec<Card>,
+  /// Цвет фона доски.
+  pub background_color: String,
+}
+
+/// Пользователь.
+#[derive(Deserialize, Serialize)]
+pub struct User {
+  /// Идентификатор пользователя в базе данных.
+  pub id: i64,
+  /// Доступные доски.
+  pub shared_boards: Vec<i64>,
+  /// Сведения авторизации пользователя.
+  pub user_creds: UserCredentials,
+}
+
 impl Task {
   /// Возвращает мутабельную ссылку на подзадачу.
   pub fn get_mut_subtask(&mut self, subtask_id: &i64) -> Result<&mut Subtask, GetMutSubtaskError> {
@@ -124,25 +195,6 @@ impl Task {
     let subtask_index: usize = subtask_index.unwrap();
     Ok(self.subtasks.remove(subtask_index))
   }
-}
-
-/// Карточка.
-#[derive(Deserialize, Serialize)]
-pub struct Card {
-  /// Уникальный идентификатор карточки в пределах доски.
-  pub id: i64,
-  /// Автор карточки.
-  pub author: i64,
-  /// Название карточки.
-  pub title: String,
-  /// Список задач.
-  pub tasks: Vec<Task>,
-  // Цвет текста заголовка.
-  pub header_text_color: String,
-  /// Цвет фона заголовка.
-  pub header_background_color: String,
-  /// Цвет фона карточки.
-  pub background_color: String,
 }
 
 impl Card {
@@ -203,47 +255,6 @@ impl Card {
     let task_index: usize = task_index.unwrap();
     self.tasks[task_index].remove_subtask(subtask_id)
   }
-}
-
-/// Краткая информация о досках пользователя.
-#[derive(Deserialize, Serialize)]
-pub struct BoardsShort {
-  /// Идентификатор доски.
-  pub id: i64,
-  /// Название доски.
-  pub title: String,
-  /// Цвет текста заголовка.
-  pub header_text_color: String,
-  /// Цвет фона заголовка.
-  pub header_background_color: String,
-}
-
-/// Заголовок доски.
-#[derive(Deserialize, Serialize)]
-pub struct BoardHeader {
-  /// Название доски.
-  pub title: String,
-  /// Цвет текста заголовка.
-  pub header_text_color: String,
-  /// Цвет фона заголовка.
-  pub header_background_color: String,
-}
-
-/// Доска.
-#[derive(Deserialize, Serialize)]
-pub struct Board {
-  /// Уникальный идентификатор доски в базе данных.
-  pub id: i64,
-  /// Заголовок доски.
-  pub header: BoardHeader,
-  /// Автор доски.
-  pub author: i64,
-  /// Список пользователей, у которых есть доступ к карточке.
-  pub shared_with: Vec<i64>,
-  /// Список карточек.
-  pub cards: Vec<Card>,
-  /// Цвет фона доски.
-  pub background_color: String,
 }
 
 pub trait Cards {
@@ -347,17 +358,6 @@ impl Cards for Vec<Card> {
     let card_index: usize = card_index.unwrap();
     self[card_index].remove_subtask(task_id, subtask_id)
   }
-}
-
-/// Пользователь.
-#[derive(Deserialize, Serialize)]
-pub struct User {
-  /// Идентификатор пользователя в базе данных.
-  pub id: i64,
-  /// Доступные доски.
-  pub shared_boards: Vec<i64>,
-  /// Сведения авторизации пользователя.
-  pub user_creds: UserCredentials,
 }
 
 // Возможные ошибки при извлечении данных из тела HTTP-запроса.
