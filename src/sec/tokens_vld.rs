@@ -1,6 +1,7 @@
 //! Отвечает за токены и оплату аккаунта.
 
 use chrono::{Utc, Duration};
+use sha3::{Digest, Sha3_256};
 
 use crate::core::{get_tokens_and_billing, write_tokens};
 use crate::psql_handler::Db;
@@ -27,7 +28,10 @@ pub async fn verify_user(db: &Db, token_auth: &TokenAuth) -> (bool, bool) {
     if duration.num_days() >= 5 {
       s += 1;
     } else {
-      if tokens[i].tk == token_auth.token {
+      let mut hasher = Sha3_256::new();
+      hasher.update(&token_auth.token);
+      let hashed = hasher.finalize();
+      if tokens[i].tk == hashed.to_vec() {
         validated = true;
         tokens[i].from_dt = Utc::now();
       }

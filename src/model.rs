@@ -137,6 +137,16 @@ pub struct BoardHeader {
   pub header_background_color: String,
 }
 
+/// Фон доски.
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum BoardBackground {
+  /// Однотонный цвет.
+  Color { color: String },
+  /// Картинка с удалённого ресурса.
+  URL { url: String }
+}
+
 /// Доска.
 #[derive(Deserialize, Serialize)]
 pub struct Board {
@@ -150,8 +160,8 @@ pub struct Board {
   pub shared_with: Vec<i64>,
   /// Список карточек.
   pub cards: Vec<Card>,
-  /// Цвет фона доски.
-  pub background_color: String,
+  /// Фон доски.
+  pub background: BoardBackground,
 }
 
 /// Пользователь.
