@@ -9,29 +9,25 @@
 Для сборки введите команду:
 
 ```bash
-cargo build --release
+$ cargo build --release
 ```
 
-Перед запуском предварительно установите и настройте PostgreSQL. TaskBoard требует пользователя с возможностью создавать базы данных.
+Перед запуском предварительно установите PostgreSQL. Создайте пользователя `cc-taskboard-server`, базу данных `cc-taskboard-server` и дайте привилегии пользователю на эту базу данных. После этого запустите PostgreSQL.
 
-Для запуска перейдите в `target/release` и введите:
-
-```bash
-./cc-taskboard-server
-```
-
-Или, если у вас есть файл конфигурации:
+Для запуска сервера создайте в `target/release` файл `app_config.json`:
 
 ```json
 {
   "pg": "host=... user='...' password='...' connect_timeout=10 keepalives=0",
   "admin_key": "...",
-  "hyper_addr": "127.0.0.1:8004"
+  "hyper_addr": "0.0.0.0:<порт>"
 }
 ```
 
+ и выполните:
+
 ```bash
-./cc-taskboard-server app_config.json
+$ ./cc-taskboard-server app_config.json
 ```
 
 ## API

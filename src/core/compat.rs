@@ -43,8 +43,6 @@ pub struct UserCredentials2_3_2 {
   pub tokens: Vec<Token2_3_2>,
 }
 
-
-
 /// Обновляет репрезентацию фона в досках из версии 2.3.2 и ниже.
 pub fn integrate_boards_background_232_to_cur(background_color: &str) -> BoardBackground {
   BoardBackground::Color { color: background_color.to_owned() }
@@ -89,8 +87,7 @@ pub async fn upgrade_db(db: &Db, from_ver: &str) -> bool {
     // В базе данных изменилась колонка background_color (boards) на background. В структуре данных Board строка `background_color` заменена на перечисление BoardBackground `background`.
     "2.3.2" => match db.write_mul(vec![
       ("alter table boards rename column background_color to background;", vec![]),
-      (&format!("create table if not exists taskboard_keys (key varchar unique, value varchar); \
-      insert into taskboard_keys values ('tbs_ver', '{}');", VERSION), vec![]),
+      (&format!("create table if not exists taskboard_keys (key varchar unique, value varchar); insert into taskboard_keys values ('tbs_ver', '{}');", VERSION), vec![]),
     ]).await {
       Ok(_) => true,
       _ => false,

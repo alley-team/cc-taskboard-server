@@ -7,7 +7,7 @@ use futures::future;
 use serde_json::Value as JsonValue;
 use sha3::{Digest, Sha3_256};
 use std::{boxed::Box, collections::HashSet};
-use tokio_postgres::types::ToSql;
+use tokio_postgres::{row::Row, types::ToSql};
 
 mod compat;
 
@@ -90,7 +90,7 @@ pub async fn sign_in_creds_to_id(db: &Db, sign_in_credentials: &SignInCredential
   ).await?;
   // Блок совместимости с версиями 2.3.2 и ниже.
   // ####
-  let user_credentials: UserCredentials = match serde_json::from_str(id_and_credentials.get(1)) {
+  let user_credentials: UserCredentials = serde_json::from_str(id_and_credentials.get(1))?; /*{
     Ok(creds) => creds,
     _ => {
       let tbs_db_ver = compat::check_tbs_db_ver(db).await;
@@ -111,7 +111,7 @@ pub async fn sign_in_creds_to_id(db: &Db, sign_in_credentials: &SignInCredential
         return Err(Box::new(WDE{}));
       }
     },
-  };
+  };*/
   // ####
   match key_gen::check_pass(
     user_credentials.salt,
@@ -128,7 +128,7 @@ pub async fn get_new_token(db: &Db, id: &i64) -> MResult<TokenAuth> {
   let user_credentials = db.read("select user_creds from users where id = $1;", &[id]).await?;
   // Блок совместимости с версиями 2.3.2 и ниже.
   // ####
-  let mut user_credentials: UserCredentials = match serde_json::from_str(user_credentials.get(0)) {
+  let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?; /*{
     Ok(creds) => creds,
     _ => {
       let tbs_db_ver = compat::check_tbs_db_ver(db).await;
@@ -145,7 +145,7 @@ pub async fn get_new_token(db: &Db, id: &i64) -> MResult<TokenAuth> {
         return Err(Box::new(WDE{}));
       }
     },
-  };
+  };*/
   // ####
   let token = key_gen::generate_strong(64)?;
   let mut hasher = Sha3_256::new();
@@ -167,7 +167,7 @@ pub async fn get_tokens_and_billing(db: &Db, id: &i64) -> MResult<(Vec<Token>, A
   let user_data = db.read("select user_creds, apd from users where id = $1;", &[id]).await?;
   // Блок совместимости с версиями 2.3.2 и ниже.
   // ####
-  let user_credentials: UserCredentials = match serde_json::from_str(user_data.get(0)) {
+  let user_credentials: UserCredentials = serde_json::from_str(user_data.get(0))?; /*{
     Ok(creds) => creds,
     _ => {
       let tbs_db_ver = compat::check_tbs_db_ver(db).await;
@@ -184,7 +184,7 @@ pub async fn get_tokens_and_billing(db: &Db, id: &i64) -> MResult<(Vec<Token>, A
         return Err(Box::new(WDE{}));
       }
     },
-  };
+  };*/
   // ####
   let billing: AccountPlanDetails = serde_json::from_str(user_data.get(1))?;
   Ok((user_credentials.tokens, billing))
@@ -195,7 +195,7 @@ pub async fn write_tokens(db: &Db, id: &i64, tokens: &Vec<Token>) -> MResult<()>
   let user_credentials = db.read("select user_creds from users where id = $1;", &[id]).await?;
   // Блок совместимости с версиями 2.3.2 и ниже.
   // ####
-  let mut user_credentials: UserCredentials = match serde_json::from_str(user_credentials.get(0)) {
+  let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?;/* {
     Ok(creds) => creds,
     _ => {
       let tbs_db_ver = compat::check_tbs_db_ver(db).await;
@@ -209,7 +209,7 @@ pub async fn write_tokens(db: &Db, id: &i64, tokens: &Vec<Token>) -> MResult<()>
         return Err(Box::new(WDE{}));
       }
     },
-  };
+  };*/
   // ####
   user_credentials.tokens = tokens.clone();
   let user_credentials = serde_json::to_string(&user_credentials)?;
@@ -272,13 +272,26 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
 pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
   // Блок совместимости с версиями 2.3.2 и ниже.
   // ####
-  let board_data = match db.read(
+  let board_data = db.read(
     "select author, shared_with, header, cards, background from boards where id = $1;",
     &[board_id]
-  ).await {
+  ).await?;/* {
     Ok(data) => data,
     _ => {
-      let tbs_db_ver = compat::check_tbs_db_ver(db).await;
+      let keys_table_existence = db.read(
+        "select exists (select from pg_tables where schemaname = 'public' and tablename = 'taskboard_keys');",
+        &[]
+      ).await?;
+      let keys_table_existence: bool = keys_table_existence.get(0);
+      let tbs_db_ver = match keys_table_existence {
+        false => "2.3.2".to_string(),
+        true => {
+          let key = "tbs_ver".to_string();
+          let value = db.read("select value from taskboard_keys where key = $1;", &[&key]).await.unwrap();
+          let value: String = value.get(0);
+          value
+        },
+      };
       if tbs_db_ver != compat::VERSION {
         if compat::upgrade_db(db, &tbs_db_ver).await != true {
           return Err(Box::new(UPGE{}));
@@ -292,7 +305,7 @@ pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
         return Err(Box::new(WDE{}));
       }
     },
-  };
+  };*/
   // ####
   let author: i64 = board_data.get(0);
   let shared_with: String = board_data.get(1);
@@ -342,7 +355,7 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch:
     let r: Vec<&(dyn ToSql + Sync)> = vec![&background, board_id];
     // Блок совместимости с версиями 2.3.2 и ниже.
     // ####
-    if let Err(_) = db.write("update boards set background = $1 where id = $2;", &r).await {
+    /*if let Err(_) = */db.write("update boards set background = $1 where id = $2;", &r).await?; /*{
       let tbs_db_ver = compat::check_tbs_db_ver(db).await;
       if tbs_db_ver != compat::VERSION {
         if compat::upgrade_db(db, &tbs_db_ver).await != true {
@@ -353,7 +366,7 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch:
       } else {
         return Err(Box::new(WDE{}));
       };
-    };
+    };*/
     // ####
   };
   if let Some(header_background_color) = patch.get("header_background_color") {
