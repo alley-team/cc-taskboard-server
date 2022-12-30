@@ -10,7 +10,7 @@ use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
 type MResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 custom_error!{NFO{} = "Не удалось получить данные."}
-custom_error!(TNF{} = "Не удалось найти тег по идентификатору.");
+custom_error!{TNF{} = "Не удалось найти тег по идентификатору."}
 
 /// Реализует операции ввода-вывода над пулом соединений с базой данных PostgreSQL.
 #[derive(Clone)]

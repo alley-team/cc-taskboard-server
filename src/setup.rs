@@ -14,8 +14,6 @@ pub struct AppConfig {
 
 impl AppConfig {
   /// Загружает конфигурацию.
-  ///
-  /// Если предоставлен второй аргумент командной строки, 
   pub fn load() -> AppConfig {
     match match env::args().nth(1) {
       None => AppConfig::stdin_setup(),
