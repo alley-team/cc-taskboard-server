@@ -7,9 +7,7 @@ use futures::future;
 use serde_json::Value as JsonValue;
 use sha3::{Digest, Sha3_256};
 use std::{boxed::Box, collections::HashSet};
-use tokio_postgres::{row::Row, types::ToSql};
-
-mod compat;
+use tokio_postgres::types::ToSql;
 
 use crate::model::{Board, BoardsShort, BoardHeader, BoardBackground, Cards, Card, Task, Subtask, Tag, Timelines};
 use crate::psql_handler::Db;
@@ -34,30 +32,7 @@ pub async fn db_setup(db: &Db) -> MResult<()> {
     ("create table if not exists users (id bigserial, login varchar unique, shared_boards varchar, user_creds varchar, apd varchar);", vec![]),
     ("create table if not exists boards (id bigserial, author bigint, shared_with varchar, header varchar, cards varchar, background varchar);", vec![]),
     ("create table if not exists id_seqs (id varchar unique, val bigint);", vec![])
-  ]).await?;
-  db.write(
-    "insert into taskboard_keys values ($1, $2) on conflict (key) do update set val = excluded.val;",
-    &[&String::from("tbs_ver"), &String::from(compat::VERSION)]
-  ).await
-}
-
-/// Регистрирует ключ.
-///
-/// Один ключ работает для одной регистрации. После регистрации ключ удаляется из БД.
-pub async fn register_new_cc_key(db: &Db) -> MResult<String> {
-  let key = key_gen::generate_strong(64)?;
-  db.write("insert into cc_keys values (default, $1);", &[&key]).await?;
-  Ok(key)
-}
-
-/// Проверяет наличие ключа в БД.
-pub async fn check_cc_key(db: &Db, some_key: &String) -> MResult<i64> {
-  Ok(db.read("select id from cc_keys where key = $1;", &[some_key]).await?.get(0))
-}
-
-/// Удаляет ключ после использования.
-pub async fn remove_cc_key(db: &Db, key_id: &i64) -> MResult<()> {
-  db.write("delete from cc_keys where id = $1;", &[key_id]).await
+  ]).await
 }
 
 /// Создаёт пользователя.
@@ -88,31 +63,7 @@ pub async fn sign_in_creds_to_id(db: &Db, sign_in_credentials: &SignInCredential
   let id_and_credentials = db.read(
     "select id, user_creds from users where login = $1;", &[&sign_in_credentials.login]
   ).await?;
-  // Блок совместимости с версиями 2.3.2 и ниже.
-  // ####
-  let user_credentials: UserCredentials = serde_json::from_str(id_and_credentials.get(1))?; /*{
-    Ok(creds) => creds,
-    _ => {
-      let tbs_db_ver = compat::check_tbs_db_ver(db).await;
-      if tbs_db_ver != compat::VERSION {
-        if compat::upgrade_db(db, &tbs_db_ver).await != true {
-          return Err(Box::new(UPGE{}));
-        } else {
-          let creds = compat::integrate_user_creds_232_to_cur(id_and_credentials.get(1))?;
-          let c = serde_json::to_string(&creds)?;
-          let id: i64 = id_and_credentials.get(0);
-          db.write(
-            "update users set user_creds = $1 where id = $2;",
-            &[&c, &id]
-          ).await?;
-          creds
-        }
-      } else {
-        return Err(Box::new(WDE{}));
-      }
-    },
-  };*/
-  // ####
+  let user_credentials: UserCredentials = serde_json::from_str(id_and_credentials.get(1))?;
   match key_gen::check_pass(
     user_credentials.salt,
     user_credentials.salted_pass,
@@ -126,27 +77,7 @@ pub async fn sign_in_creds_to_id(db: &Db, sign_in_credentials: &SignInCredential
 /// Создаёт новый токен и возвращает его.
 pub async fn get_new_token(db: &Db, id: &i64) -> MResult<TokenAuth> {
   let user_credentials = db.read("select user_creds from users where id = $1;", &[id]).await?;
-  // Блок совместимости с версиями 2.3.2 и ниже.
-  // ####
-  let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?; /*{
-    Ok(creds) => creds,
-    _ => {
-      let tbs_db_ver = compat::check_tbs_db_ver(db).await;
-      if tbs_db_ver != compat::VERSION {
-        if compat::upgrade_db(db, &tbs_db_ver).await != true {
-          return Err(Box::new(UPGE{}));
-        } else {
-          let creds = compat::integrate_user_creds_232_to_cur(user_credentials.get(0))?;
-          let c = serde_json::to_string(&creds)?;
-          db.write("update users set user_creds = $1 where id = $2;", &[&c, id]).await?;
-          creds
-        }
-      } else {
-        return Err(Box::new(WDE{}));
-      }
-    },
-  };*/
-  // ####
+  let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?;
   let token = key_gen::generate_strong(64)?;
   let mut hasher = Sha3_256::new();
   hasher.update(&token);
@@ -165,27 +96,7 @@ pub async fn get_new_token(db: &Db, id: &i64) -> MResult<TokenAuth> {
 /// Получает все токены пользователя.
 pub async fn get_tokens_and_billing(db: &Db, id: &i64) -> MResult<(Vec<Token>, AccountPlanDetails)> {
   let user_data = db.read("select user_creds, apd from users where id = $1;", &[id]).await?;
-  // Блок совместимости с версиями 2.3.2 и ниже.
-  // ####
-  let user_credentials: UserCredentials = serde_json::from_str(user_data.get(0))?; /*{
-    Ok(creds) => creds,
-    _ => {
-      let tbs_db_ver = compat::check_tbs_db_ver(db).await;
-      if tbs_db_ver != compat::VERSION {
-        if compat::upgrade_db(db, &tbs_db_ver).await != true {
-          return Err(Box::new(UPGE{}));
-        } else {
-          let creds = compat::integrate_user_creds_232_to_cur(user_data.get(0))?;
-          let c = serde_json::to_string(&creds)?;
-          db.write("update users set user_creds = $1 where id = $2;", &[&c, id]).await?;
-          creds
-        }
-      } else {
-        return Err(Box::new(WDE{}));
-      }
-    },
-  };*/
-  // ####
+  let user_credentials: UserCredentials = serde_json::from_str(user_data.get(0))?;
   let billing: AccountPlanDetails = serde_json::from_str(user_data.get(1))?;
   Ok((user_credentials.tokens, billing))
 }
@@ -193,24 +104,7 @@ pub async fn get_tokens_and_billing(db: &Db, id: &i64) -> MResult<(Vec<Token>, A
 /// Обновляет все токены пользователя.
 pub async fn write_tokens(db: &Db, id: &i64, tokens: &Vec<Token>) -> MResult<()> {
   let user_credentials = db.read("select user_creds from users where id = $1;", &[id]).await?;
-  // Блок совместимости с версиями 2.3.2 и ниже.
-  // ####
-  let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?;/* {
-    Ok(creds) => creds,
-    _ => {
-      let tbs_db_ver = compat::check_tbs_db_ver(db).await;
-      if tbs_db_ver != compat::VERSION {
-        if compat::upgrade_db(db, &tbs_db_ver).await != true {
-          return Err(Box::new(UPGE{}));
-        } else {
-          compat::integrate_user_creds_232_to_cur(user_credentials.get(0))?
-        }
-      } else {
-        return Err(Box::new(WDE{}));
-      }
-    },
-  };*/
-  // ####
+  let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?;
   user_credentials.tokens = tokens.clone();
   let user_credentials = serde_json::to_string(&user_credentials)?;
   db.write("update users set user_creds = $1 where id = $2;", &[&user_credentials, id]).await
@@ -270,57 +164,15 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
 
 /// Отдаёт доску пользователю.
 pub async fn get_board(db: &Db, board_id: &i64) -> MResult<String> {
-  // Блок совместимости с версиями 2.3.2 и ниже.
-  // ####
   let board_data = db.read(
     "select author, shared_with, header, cards, background from boards where id = $1;",
     &[board_id]
-  ).await?;/* {
-    Ok(data) => data,
-    _ => {
-      let keys_table_existence = db.read(
-        "select exists (select from pg_tables where schemaname = 'public' and tablename = 'taskboard_keys');",
-        &[]
-      ).await?;
-      let keys_table_existence: bool = keys_table_existence.get(0);
-      let tbs_db_ver = match keys_table_existence {
-        false => "2.3.2".to_string(),
-        true => {
-          let key = "tbs_ver".to_string();
-          let value = db.read("select value from taskboard_keys where key = $1;", &[&key]).await.unwrap();
-          let value: String = value.get(0);
-          value
-        },
-      };
-      if tbs_db_ver != compat::VERSION {
-        if compat::upgrade_db(db, &tbs_db_ver).await != true {
-          return Err(Box::new(UPGE{}));
-        } else {
-          db.read(
-            "select author, shared_with, header, cards, background from boards where id = $1;",
-            &[board_id]
-          ).await?
-        }
-      } else {
-        return Err(Box::new(WDE{}));
-      }
-    },
-  };*/
-  // ####
+  ).await?;
   let author: i64 = board_data.get(0);
   let shared_with: String = board_data.get(1);
   let header: String = board_data.get(2);
   let cards: String = board_data.get(3);
-  let mut background: String = board_data.get(4);
-  // Блок совместимости с версиями 2.3.2 и ниже.
-  // ####
-  if let Err(_) = serde_json::from_str::<BoardBackground>(&background) {
-    let bg_as_struct = compat::integrate_boards_background_232_to_cur(&background);
-    let bg_as_struct = serde_json::to_string(&bg_as_struct)?;
-    db.write("update boards set background = $1 where id = $2;", &[&bg_as_struct, board_id]).await?;
-    background = bg_as_struct.clone();
-  };
-  // ####
+  let background: String = board_data.get(4);
   Ok(
     format!(
       r#"{{"id":{},"author":{},"shared_with":{},"header":{},"cards":{},"background":"{}"}}"#,
@@ -353,21 +205,7 @@ pub async fn apply_patch_on_board(db: &Db, user_id: &i64, board_id: &i64, patch:
     };
     let background = serde_json::to_string(&background)?;
     let r: Vec<&(dyn ToSql + Sync)> = vec![&background, board_id];
-    // Блок совместимости с версиями 2.3.2 и ниже.
-    // ####
-    /*if let Err(_) = */db.write("update boards set background = $1 where id = $2;", &r).await?; /*{
-      let tbs_db_ver = compat::check_tbs_db_ver(db).await;
-      if tbs_db_ver != compat::VERSION {
-        if compat::upgrade_db(db, &tbs_db_ver).await != true {
-          return Err(Box::new(UPGE{}));
-        } else {
-          db.write("update boards set background = $1 where id = $2;", &r).await?;
-        };
-      } else {
-        return Err(Box::new(WDE{}));
-      };
-    };*/
-    // ####
+    db.write("update boards set background = $1 where id = $2;", &r).await?;
   };
   if let Some(header_background_color) = patch.get("header_background_color") {
     let header_background_color = String::from(header_background_color.as_str().ok_or(NFO{})?);

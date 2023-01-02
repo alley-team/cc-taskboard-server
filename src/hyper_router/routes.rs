@@ -43,21 +43,6 @@ pub async fn db_setup(ws: Workspace, admin_key: String) -> Response<Body> {
   resp::from_code_and_msg(status_code, None)
 }
 
-/// Генерирует новый ключ регистрации по запросу администратора.
-pub async fn get_new_cc_key(ws: Workspace, admin_key: String) -> Response<Body> {
-  let key = match extract_creds::<AdminCredentials>(ws.req.headers().get("App-Token")) {
-    Ok(v) => v.key,
-    _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
-  };
-  if key != admin_key {
-    return resp::from_code_and_msg(401, None);
-  }
-  match core::register_new_cc_key(&ws.db).await {
-    Ok(key) => resp::from_code_and_msg(200, Some(&key)),
-    _ => resp::from_code_and_msg(500, None),
-  }
-}
-
 /// Отвечает за регистрацию нового пользователя. 
 ///
 /// Создаёт аккаунт и возвращает данные аутентификации (новый токен и идентификатор).
@@ -66,15 +51,8 @@ pub async fn sign_up(ws: Workspace) -> Response<Body> {
     Ok(v) => v,
     _ => return resp::from_code_and_msg(401, Some("Не получен валидный токен.")),
   };
-  let cc_key_id = match core::check_cc_key(&ws.db, &su_creds.cc_key).await {
-    Ok(v) => v,
-    _ => return resp::from_code_and_msg(401, Some("Ключ регистрации не найден.")),
-  };
   if su_creds.pass.len() < 8 {
     return resp::from_code_and_msg(400, Some("Пароль слишком короткий."));
-  };
-  if let Err(_) = core::remove_cc_key(&ws.db, &cc_key_id).await {
-    return resp::from_code_and_msg(401, Some("Ключ регистрации не удалось удалить."));
   };
   let id = match core::create_user(&ws.db, &su_creds).await {
     Ok(v) => v,

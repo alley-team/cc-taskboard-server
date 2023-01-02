@@ -24,7 +24,6 @@ pub async fn router(req: Request<Body>, db: Db, admin_key: String, _addr: Socket
   Ok(match (ws.req.method(), ws.req.uri().path()) {
     (    &Method::GET,     "/favicon.ico")  => resp  ::from_code_and_msg  (404, None),
     (    &Method::GET,     "/pg-setup")     => routes::db_setup           (ws, admin_key)      .await,
-    (    &Method::GET,     "/cc-key")       => routes::get_new_cc_key     (ws, admin_key)      .await,
     (    &Method::PUT,     "/sign-up")      => routes::sign_up            (ws)                 .await,
     (    &Method::GET,     "/sign-in")      => routes::sign_in            (ws)                 .await,
     (    &Method::OPTIONS, _)               => routes::pre_request        ()                   .await,
