@@ -20,7 +20,6 @@ type MResult<T> = Result<T, Box<dyn std::error::Error>>;
 custom_error!{NFO{}  = "Не удалось получить данные."}
 custom_error!{WDE{}  = "Не удалось записать данные."}
 custom_error!{TNF{}  = "Не удалось найти тег по идентификатору."}
-custom_error!{UPGE{} = "Не удалось обновить базу данных."}
 
 /// Настраивает базу данных.
 ///
@@ -28,7 +27,6 @@ custom_error!{UPGE{} = "Не удалось обновить базу данны
 pub async fn db_setup(db: &Db) -> MResult<()> {
   db.write_mul(vec![
     ("create table if not exists taskboard_keys (key varchar unique, value varchar);", vec![]),
-    ("create table if not exists cc_keys (id bigserial, key varchar unique);", vec![]),
     ("create table if not exists users (id bigserial, login varchar unique, shared_boards varchar, user_creds varchar, apd varchar);", vec![]),
     ("create table if not exists boards (id bigserial, author bigint, shared_with varchar, header varchar, cards varchar, background varchar);", vec![]),
     ("create table if not exists id_seqs (id varchar unique, val bigint);", vec![])
