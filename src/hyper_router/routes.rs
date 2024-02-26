@@ -135,7 +135,7 @@ pub async fn get_board(ws: Workspace, user_id: i64) -> Response<Body> {
     },
     _ => return resp::from_code_and_msg(400, Some("Не удалось десериализовать данные.")),
   };
-  if let Err(_) = core::in_shared_with(&ws.db, &user_id, &board_id).await {
+  if core::in_shared_with(&ws.db, &user_id, &board_id).await.is_err() {
     return resp::from_code_and_msg(401, Some("Данная доска вам недоступна."));
   };
   match core::get_board(&ws.db, &board_id).await {
@@ -658,7 +658,7 @@ pub async fn get_tags(ws: Workspace, user_id: i64) -> Response<Body> {
         Ok(tags) => resp::from_code_and_msg(200, Some(&tags)),
         _ => resp::from_code_and_msg(500, Some("Не удалось получить теги подзадачи.")),
       },
-      _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
+      _ => resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
     _ => match core::get_task_tags(
       &ws.db, &board_id, &card_id, &task_id
@@ -714,7 +714,7 @@ pub async fn create_tag(ws: Workspace, user_id: i64) -> Response<Body> {
         Ok(id) => resp::from_code_and_msg(200, Some(&id.to_string())),
         _ => resp::from_code_and_msg(500, Some("Не удалось прикрепить тег к подзадаче.")),
       },
-      _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
+      _ => resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
     _ => match core::create_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag
@@ -770,7 +770,7 @@ pub async fn patch_tag(ws: Workspace, user_id: i64) -> Response<Body> {
         Ok(_) => resp::from_code_and_msg(200, None),
         _ => resp::from_code_and_msg(500, Some("Не удалось изменить тег.")),
       },
-      _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
+      _ => resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
     _ => match core::patch_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag_id, &patch
@@ -826,7 +826,7 @@ pub async fn delete_tag(ws: Workspace, user_id: i64) -> Response<Body> {
         Ok(_) => resp::from_code_and_msg(200, None),
         _ => resp::from_code_and_msg(500, Some("Не удалось удалить тег.")),
       },
-      _ => return resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
+      _ => resp::from_code_and_msg(400, Some("subtask_id должен быть числом.")),
     },
     _ => match core::delete_tag_at_task(
       &ws.db, &board_id, &card_id, &task_id, &tag_id

@@ -14,7 +14,7 @@ pub fn generate_strong(length: usize) -> Result<String, &'static str> {
     exclude_similar_characters: true,
     spaces: false,
   };
-  Ok(pg.generate_one()?)
+  pg.generate_one()
 }
 
 /// Солит пароль, подготавливая к хранению в базе данных.
@@ -26,5 +26,5 @@ pub fn salt_pass(pass: String) -> Result<(Vec<u8>, Vec<u8>), &'static str> {
 
 /// Проверяет правильность пароля.
 pub fn check_pass(salt: Vec<u8>, salted_pass: Vec<u8>, guessed_pass: &String) -> bool {
-  Vec::from(bcrypt(10, &salt, &guessed_pass).unwrap()) == salted_pass
+  salted_pass == bcrypt(10, &salt, &guessed_pass).unwrap()
 }

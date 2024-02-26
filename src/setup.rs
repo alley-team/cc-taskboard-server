@@ -1,4 +1,5 @@
-use std::{env, io, io::Read, process, fs, boxed::Box, net::SocketAddr};
+use dotenv::{dotenv, from_filename};
+use std::{env, io, io::Read, process, fs, net::SocketAddr};
 use serde::{Deserialize, Serialize};
 
 /// Конфигурация приложения.
@@ -38,12 +39,12 @@ impl AppConfig {
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
     let buffer = buffer.trim();
-    let pg = String::from("host=localhost user='") + &buffer + &String::from("' password='");
+    let pg = String::from("host=localhost user='") + buffer + &String::from("' password='");
     println!("Введите пароль PostgreSQL:");
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
     let buffer = buffer.trim();
-    let pg = pg + &buffer + &String::from("' connect_timeout=10 keepalives=0");
+    let pg = pg + buffer + &String::from("' connect_timeout=10 keepalives=0");
     println!("Введите IP-адрес и порт сервера:");
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
@@ -52,23 +53,39 @@ impl AppConfig {
     println!("Введите ключ для аутентификации администратора (минимум 64 символа):");
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
-    let admin_key = String::from(buffer.strip_suffix("\n").ok_or("")?);
+    let admin_key = String::from(buffer.strip_suffix('\n').ok_or("")?);
     match admin_key.len() < 64 {
-      true => Err(Box::new(io::Error::new(io::ErrorKind::Other, 
-                                          "Длина ключа администратора меньше 64 символов."))),
+      true => Err(Box::new(io::Error::new(io::ErrorKind::Other, "Длина ключа администратора меньше 64 символов."))),
+      false => Ok(AppConfig { pg, admin_key, hyper_addr }),
+    }
+  }
+  
+  /// Считывает информацию из переменных окружения.
+  fn env_setup() -> Result<AppConfig, Box<dyn std::error::Error>> {
+    if dotenv().is_err() { from_filename("/etc/taskboard.conf").ok(); }
+    let pg = format!(
+      "host={} user='{}' password='{}' connect_timeout=10 keepalives=0",
+      std::env::var("POSTGRES_HOST").unwrap(),
+      std::env::var("POSTGRES_USER").unwrap(),
+      std::env::var("POSTGRES_PASSWORD").unwrap()
+    );
+    let hyper_addr: SocketAddr = std::env::var("SERVER_LISTEN").unwrap().parse()?;
+    let admin_key = std::env::var("ADMIN_KEY").unwrap();
+    match admin_key.len() < 64 {
+      true => Err(Box::new(io::Error::new(io::ErrorKind::Other, "Длина ключа администратора меньше 64 символов."))),
       false => Ok(AppConfig { pg, admin_key, hyper_addr }),
     }
   }
   
   /// Считывает информацию из данного файла.
   fn parse_cfg_file(filepath: String) -> Result<AppConfig, Box<dyn std::error::Error>> {
+    if filepath == "--env" { return AppConfig::env_setup() }
     let mut file = fs::File::open(filepath)?;
     let mut buffer = String::new();
     file.read_to_string(&mut buffer)?;
     let conf: AppConfig = serde_json::from_str(&buffer)?;
     match conf.admin_key.len() < 64 {
-      true => Err(Box::new(io::Error::new(io::ErrorKind::Other,
-                                          "Длина ключа администратора меньше 64 символов."))),
+      true => Err(Box::new(io::Error::new(io::ErrorKind::Other, "Длина ключа администратора меньше 64 символов."))),
       false => Ok(conf),
     }
   }

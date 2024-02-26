@@ -9,10 +9,10 @@ custom_error!{pub IncorrectColor
 
 /// Проверяет цвет, передаваемый текстом, на соответствие требованиям.
 pub fn validate_color(color: &str) -> Result<(), IncorrectColor> {
-  if color.bytes().count() != 7 {
+  if color.len() != 7 {
     return Err(IncorrectColor::IncompatibleColorLen);
   };
-  if color.chars().nth(0) != Some('#') {
+  if !color.starts_with('#') {
     return Err(IncorrectColor::IncompatibleColorBeginning);
   };
   Ok(())

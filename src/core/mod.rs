@@ -1,12 +1,11 @@
 //! Отвечает за реализацию логики приложения.
 
 use chrono::Utc;
-use core::marker::{Send, Sync};
 use custom_error::custom_error;
 use futures::future;
 use serde_json::Value as JsonValue;
 use sha3::{Digest, Sha3_256};
-use std::{boxed::Box, collections::HashSet};
+use std::collections::HashSet;
 use tokio_postgres::types::ToSql;
 
 use crate::model::{Board, BoardsShort, BoardHeader, BoardBackground, Cards, Card, Task, Subtask, Tag, Timelines};
@@ -87,7 +86,7 @@ pub async fn get_new_token(db: &Db, id: &i64) -> MResult<TokenAuth> {
   user_credentials.tokens.push(token_info.clone());
   let user_credentials = serde_json::to_string(&user_credentials)?;
   db.write("update users set user_creds = $1 where id = $2;", &[&user_credentials, id]).await?;
-  let token_auth = TokenAuth { id: *id, token: token };
+  let token_auth = TokenAuth { id: *id, token };
   Ok(token_auth)
 }
 
@@ -100,10 +99,10 @@ pub async fn get_tokens_and_billing(db: &Db, id: &i64) -> MResult<(Vec<Token>, A
 }
 
 /// Обновляет все токены пользователя.
-pub async fn write_tokens(db: &Db, id: &i64, tokens: &Vec<Token>) -> MResult<()> {
+pub async fn write_tokens(db: &Db, id: &i64, tokens: &[Token]) -> MResult<()> {
   let user_credentials = db.read("select user_creds from users where id = $1;", &[id]).await?;
   let mut user_credentials: UserCredentials = serde_json::from_str(user_credentials.get(0))?;
-  user_credentials.tokens = tokens.clone();
+  user_credentials.tokens = tokens.to_owned();
   let user_credentials = serde_json::to_string(&user_credentials)?;
   db.write("update users set user_creds = $1 where id = $2;", &[&user_credentials, id]).await
 }
@@ -113,11 +112,11 @@ pub async fn list_boards(db: &Db, id: &i64) -> MResult<String> {
   let boards = db.read("select shared_boards from users where id = $1;", &[id]).await?;
   let boards: Vec<i64> = serde_json::from_str(boards.get(0))?;
   let mut shorts: Vec<BoardsShort> = vec![];
-  for i in 0..boards.len() {
-    let header: String = db.read("select header from boards where id = $1;", &[&boards[i]]).await?.get(0);
+  for board in &boards {
+    let header: String = db.read("select header from boards where id = $1;", &[board]).await?.get(0);
     let header: JsonValue = serde_json::from_str(&header)?;
     let short = BoardsShort {
-      id: boards[i],
+      id: *board,
       title: header["title"].as_str().unwrap().to_string(),
       header_text_color: header["header_text_color"].as_str().unwrap().to_string(),
       header_background_color: header["header_background_color"].as_str().unwrap().to_string(),
@@ -133,7 +132,7 @@ pub async fn create_board(db: &Db, author: &i64, board: &Board) -> MResult<i64> 
   custom_error!{EmptyTitle{} = "У доски пустой заголовок."};
   if board.header.title.is_empty() { return Err(Box::new(EmptyTitle{})); };
   if let BoardBackground::Color { color } = &board.background {
-    validate_color(&color)?;
+    validate_color(color)?;
   };
   validate_color(&board.header.header_background_color)?;
   validate_color(&board.header.header_text_color)?;
@@ -247,9 +246,9 @@ pub async fn remove_board(db: &Db, user_id: &i64, board_id: &i64) -> MResult<()>
                                                       .zip(shared_boards.into_iter())
                                                       .collect();
   let mut tasks = Vec::new();
-  for i in 0..ids_and_shared_boards.len() {
+  for id_and_shared_board in &ids_and_shared_boards {
     let board_id = *board_id;
-    let pair = (ids_and_shared_boards[i].0, ids_and_shared_boards[i].1.clone());
+    let pair = (id_and_shared_board.0, id_and_shared_board.1.clone());
     let task = tokio::task::spawn(async move {
       let user_id = pair.0;
       let mut shared_boards = pair.1;
@@ -262,13 +261,13 @@ pub async fn remove_board(db: &Db, user_id: &i64, board_id: &i64) -> MResult<()>
   };
   let results = future::try_join_all(tasks).await?;
   let mut _results = Vec::new();
-  for i in 0..results.len() {
-    _results.push(results[i].as_ref().unwrap());
+  for result in &results {
+    _results.push(result.as_ref().unwrap());
   };
   let results: Vec<&(String, i64)> = _results;
   let mut shared_boards_queries = Vec::new();
-  for i in 0..results.len() {
-    let r: Vec<&(dyn ToSql + Sync)> = vec![&results[i].0, &results[i].1];
+  for result in &results {
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&result.0, &result.1];
     shared_boards_queries.push(("update users set shared_boards = $1 where id = $2;", r));
   };
   shared_boards_queries.push(("delete from boards where id = $1;", vec![board_id]));
@@ -299,8 +298,8 @@ pub async fn in_shared_with(db: &Db, user_id: &i64, board_id: &i64) -> MResult<(
   ]).await?
     .into_iter()
     .map(|v| { serde_json::from_str::<Vec<i64>>(v.get(0)).unwrap() });
-  match iter.next().ok_or(NFO{})?.iter().position(|id| *id == *board_id).is_some() && 
-        iter.next().ok_or(NFO{})?.iter().position(|id| *id == *user_id).is_some() {
+  match iter.next().ok_or(NFO{})?.iter().any(|id| *id == *board_id) && 
+        iter.next().ok_or(NFO{})?.iter().any(|id| *id == *user_id) {
     false => Err(Box::new(NFO{})),
     _ => Ok(()),
   }
@@ -365,8 +364,8 @@ pub async fn insert_card(db: &Db, user_id: &i64, board_id: &i64, mut card: Card)
   id_seqs_queries_data.push((cards_id_seq, next_card_id));
   let mut id_seqs_queries = Vec::new();
   let query = "insert into id_seqs values ($1, $2) on conflict (id) do update set val = excluded.val;";
-  for i in 0..id_seqs_queries_data.len() {
-    let r: Vec<&(dyn ToSql + Sync)> = vec![&id_seqs_queries_data[i].0, &id_seqs_queries_data[i].1];
+  for id_seq_query in &id_seqs_queries_data {
+    let r: Vec<&(dyn ToSql + Sync)> = vec![&id_seq_query.0, &id_seq_query.1];
     id_seqs_queries.push((query, r));
   };
   db.write_mul(id_seqs_queries).await?;
@@ -687,11 +686,8 @@ pub async fn create_tag_at_subtask(
   ];
   let results = db.read_mul(queries).await?;
   let mut cards: Vec<Card> = serde_json::from_str(results[0].get(0))?;
-  let mut id: i64 = match results[1].try_get(0) {
-    Ok(id) => id,
-    Err(_) => 0,
-  };
-  id = id + 1;
+  let mut id: i64 = results[1].try_get(0).unwrap_or(0);
+  id += 1;
   let mut tag = tag.clone();
   tag.id = id;
   cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags.push(tag);
@@ -727,11 +723,8 @@ pub async fn create_tag_at_task(
   ];
   let results = db.read_mul(queries).await?;
   let mut cards: Vec<Card> = serde_json::from_str(results[0].get(0))?;
-  let mut id: i64 = match results[1].try_get(0) {
-    Ok(id) => id,
-    Err(_) => 0,
-  };
-  id = id + 1;
+  let mut id: i64 = results[1].try_get(0).unwrap_or(0);
+  id += 1;
   let mut tag = tag.clone();
   tag.id = id;
   cards.get_mut_task(card_id, task_id)?.tags.push(tag);
@@ -761,21 +754,21 @@ pub async fn patch_tag_at_subtask(
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
   let mut tags = cards.get_mut_subtask(card_id, task_id, subtask_id)?.tags.clone();
   let mut patched: bool = false;
-  for i in 0..tags.len() {
-    if tags[i].id == *tag_id {
+  for tag in &mut tags {
+    if tag.id == *tag_id {
       patched = true;
       if let Some(title) = patch.get("title") {
-        tags[i].title = String::from(title.as_str().ok_or(NFO{})?);
+        tag.title = String::from(title.as_str().ok_or(NFO{})?);
       };
       if let Some(background_color) = patch.get("background_color") {
         let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
         validate_color(&background_color)?;
-        tags[i].background_color = background_color;
+        tag.background_color = background_color;
       };
       if let Some(text_color) = patch.get("text_color") {
         let text_color = String::from(text_color.as_str().ok_or(NFO{})?);
         validate_color(&text_color)?;
-        tags[i].text_color = text_color;
+        tag.text_color = text_color;
       };
       break;
     };
@@ -802,21 +795,21 @@ pub async fn patch_tag_at_task(
   let mut cards: Vec<Card> = serde_json::from_str(cards.get(0))?;
   let mut tags = cards.get_mut_task(card_id, task_id)?.tags.clone();
   let mut patched: bool = false;
-  for i in 0..tags.len() {
-    if tags[i].id == *tag_id {
+  for tag in &mut tags {
+    if tag.id == *tag_id {
       patched = true;
       if let Some(title) = patch.get("title") {
-        tags[i].title = String::from(title.as_str().ok_or(NFO{})?);
+        tag.title = String::from(title.as_str().ok_or(NFO{})?);
       };
       if let Some(background_color) = patch.get("background_color") {
         let background_color = String::from(background_color.as_str().ok_or(NFO{})?);
         validate_color(&background_color)?;
-        tags[i].background_color = background_color;
+        tag.background_color = background_color;
       };
       if let Some(text_color) = patch.get("text_color") {
         let text_color = String::from(text_color.as_str().ok_or(NFO{})?);
         validate_color(&text_color)?;
-        tags[i].text_color = text_color;
+        tag.text_color = text_color;
       };
       break;
     };

@@ -2,7 +2,6 @@
 
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager as PgConManager;
-use core::marker::{Send, Sync};
 use custom_error::custom_error;
 use futures::future;
 use tokio_postgres::{ToStatement, types::ToSql, row::Row, NoTls};
@@ -46,8 +45,8 @@ impl Db {
   where T: ?Sized + ToStatement + Send + Sync {
     let cli = self.pool.get().await?;
     let mut tasks = Vec::new();
-    for i in 0..parts.len() {
-      tasks.push(cli.query_one(parts[i].0, &parts[i].1));
+    for part in &parts {
+      tasks.push(cli.query_one(part.0, &part.1));
     };
     let results = future::try_join_all(tasks).await?;
     Ok(results)
@@ -59,8 +58,8 @@ impl Db {
     let mut cli = self.pool.get().await?;
     let tr = cli.transaction().await?;
     let mut tasks = Vec::new();
-    for i in 0..parts.len() {
-      tasks.push(tr.execute(parts[i].0, &parts[i].1));
+    for part in &parts {
+      tasks.push(tr.execute(part.0, &part.1));
     };
     future::try_join_all(tasks).await?;
     tr.commit().await?;

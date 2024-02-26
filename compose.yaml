@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  postgresql:
+    env_file:
+      - .env
+    image: postgres:16
+    restart: always
+    environment:
+      PGUSER: ${POSTGRES_USER}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+  
+  backend:
+    env_file:
+      - .env
+    build: ./
+    command: cc-taskboard-server --env
+    ports:
+      - "8004:8004"
+    environment:
+      POSTGRES_HOST: postgresql
+    depends_on:
+      postgresql:
+        condition: service_healthy
+
+volumes:
+  postgres-db-volume:
+  dragonflydata:

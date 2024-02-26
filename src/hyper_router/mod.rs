@@ -11,9 +11,7 @@ use crate::psql_handler::Db;
 
 /// Обрабатывает сигнал завершения работы сервера.
 pub async fn shutdown() {
-  tokio::signal::ctrl_c()
-    .await
-    .expect("Не удалось установить комбинацию Ctrl+C как завершающую работу.");
+  tokio::signal::ctrl_c().await.expect("Не удалось установить комбинацию Ctrl+C как завершающую работу.");
 }
 
 /// Обрабатывает запросы клиентов.

@@ -103,7 +103,7 @@ pub fn extract_creds<T>(header: Option<&hyper::header::HeaderValue>) -> Result<T
     },
   };
   match serde_json::from_str::<T>(&creds) {
-    Err(_) => return Err(()),
+    Err(_) => Err(()),
     Ok(v) => Ok(v),
   }
 }

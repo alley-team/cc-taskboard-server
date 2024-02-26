@@ -144,7 +144,7 @@ pub enum BoardBackground {
   /// Однотонный цвет.
   Color { color: String },
   /// Картинка с удалённого ресурса.
-  URL { url: String }
+  Url { url: String }
 }
 
 /// Доска.
@@ -267,19 +267,17 @@ impl Card {
   }
 }
 
+#[allow(dead_code)]
 pub trait Cards {
   fn get_mut_card(&mut self, card_id: &i64) -> Result<&mut Card, GetMutCardError>;
   fn get_mut_task(&mut self, card_id: &i64, task_id: &i64) -> Result<&mut Task, GetMutTaskError>;
-  fn get_mut_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64)
-    -> Result<&mut Subtask, GetMutSubtaskError>;
+  fn get_mut_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<&mut Subtask, GetMutSubtaskError>;
   fn get_card(&self, card_id: &i64) -> Result<&Card, GetCardError>;
   fn get_task(&self, card_id: &i64, task_id: &i64) -> Result<&Task, GetTaskError>;
-  fn get_subtask(&self, card_id: &i64, task_id: &i64, subtask_id: &i64)
-    -> Result<&Subtask, GetSubtaskError>;
+  fn get_subtask(&self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<&Subtask, GetSubtaskError>;
   fn remove_card(&mut self, card_id: &i64) -> Result<Card, CardRemoveError>;
   fn remove_task(&mut self, card_id: &i64, task_id: &i64) -> Result<Task, TaskRemoveError>;
-  fn remove_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) 
-    -> Result<Subtask, SubtaskRemoveError>;
+  fn remove_subtask(&mut self, card_id: &i64, task_id: &i64, subtask_id: &i64) -> Result<Subtask, SubtaskRemoveError>;
 }
 
 impl Cards for Vec<Card> {
