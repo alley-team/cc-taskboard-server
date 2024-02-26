@@ -25,8 +25,8 @@ services:
       - .env
     build: ./
     command: cc-taskboard-server --env
-    ports:
-      - "8004:8004"
+    expose:
+      - "8004"
     environment:
       POSTGRES_HOST: postgresql
     depends_on:
